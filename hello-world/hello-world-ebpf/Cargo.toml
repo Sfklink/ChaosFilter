@@ -1,0 +1,17 @@
+[package]
+name = "hello-world-ebpf"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+hello-world-common = { path = "../hello-world-common" }
+
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+
+[build-dependencies]
+which = { workspace = true }
+
+[[bin]]
+name = "hello-world"
+path = "src/main.rs"
