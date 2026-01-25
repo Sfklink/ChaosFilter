@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "control",
+    "ebpf", "xtask",
+]
+resolver = "2"
