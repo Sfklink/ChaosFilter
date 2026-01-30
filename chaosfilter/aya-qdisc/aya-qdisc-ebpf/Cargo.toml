@@ -2,6 +2,13 @@
 name = "aya-qdisc-ebpf"
 version = "0.1.0"
 edition.workspace = true
+publish = false
+
+# IMPORTANT:
+# eBPF programs are compiled as object files, NOT executables.
+# This prevents Cargo from looking for `main`.
+[lib]
+crate-type = ["staticlib"]
 
 [dependencies]
 aya-qdisc-common = { path = "../aya-qdisc-common" }
@@ -9,9 +16,9 @@ aya-qdisc-common = { path = "../aya-qdisc-common" }
 aya-ebpf = { workspace = true }
 aya-log-ebpf = { workspace = true }
 
-[build-dependencies]
-which = { workspace = true }
-
-[[bin]]
-name = "aya-qdisc"
-path = "src/main.rs"
+# IMPORTANT:
+# No build.rs
+# No build-dependencies
+# No bin target
+# No panic handler
+# No std

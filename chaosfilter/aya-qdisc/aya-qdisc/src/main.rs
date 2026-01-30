@@ -1,56 +1,62 @@
-use aya::programs::TracePoint;
-#[rustfmt::skip]
-use log::{debug, warn};
-use tokio::signal;
+use anyhow::{Result, bail};
+use std::env;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    env_logger::init();
+//import the qdisc helper functions 
+mod qdisc;
 
-    // Bump the memlock rlimit. This is needed for older kernels that don't use the
-    // new memcg based accounting, see https://lwn.net/Articles/837122/
-    let rlim = libc::rlimit {
-        rlim_cur: libc::RLIM_INFINITY,
-        rlim_max: libc::RLIM_INFINITY,
-    };
-    let ret = unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlim) };
-    if ret != 0 {
-        debug!("remove limit on locked memory failed, ret is: {ret}");
-    }
+//entry point for the userspace biary
+//acts as a small CLI wrapper around Linux 'tc' operations for netem-based chaos
+//usage:
+//	aya-qdisc add <iface> <delay_ms> <loss_pct>
+//	aya-qdisc mod <iface> <delay_ms> <loss_pct>
+//	aya-qdisc del <iface>
+fn main() -> Result<()> {
+	//collects command line args
+	let args: Vec<String> = env::args().collect();
 
-    // This will include your eBPF object file as raw bytes at compile-time and load it at
-    // runtime. This approach is recommended for most real-world use cases. If you would
-    // like to specify the eBPF program at runtime rather than at compile-time, you can
-    // reach for `Bpf::load_file` instead.
-    let mut ebpf = aya::Ebpf::load(aya::include_bytes_aligned!(concat!(
-        env!("OUT_DIR"),
-        "/aya-qdisc"
-    )))?;
-    match aya_log::EbpfLogger::init(&mut ebpf) {
-        Err(e) => {
-            // This can happen if you remove all log statements from your eBPF program.
-            warn!("failed to initialize eBPF logger: {e}");
-        }
-        Ok(logger) => {
-            let mut logger =
-                tokio::io::unix::AsyncFd::with_interest(logger, tokio::io::Interest::READABLE)?;
-            tokio::task::spawn(async move {
-                loop {
-                    let mut guard = logger.readable_mut().await.unwrap();
-                    guard.get_inner_mut().flush();
-                    guard.clear_ready();
-                }
-            });
-        }
-    }
-    let program: &mut TracePoint = ebpf.program_mut("aya_qdisc").unwrap().try_into()?;
-    program.load()?;
-    program.attach("syscalls", "sys_enter_execve")?;
+	//allows a 'dry run' for testing
+	let dry_run = args.iter().any(|a| a == "--dry-run");
 
-    let ctrl_c = signal::ctrl_c();
-    println!("Waiting for Ctrl-C...");
-    ctrl_c.await?;
-    println!("Exiting...");
+	//simple arg validation
+	if args.len() < 3 {
+		bail!("Usage: aya-qdisc <add|mod|del> <iface> [delay_ms] [loss_pct]");
+	}
 
-    Ok(())
+	let command = &args[1];
+	let iface = &args[2];
+
+	match command.as_str() {
+		//add new netem qdisc
+		"add" => {
+			let delay_ms: u32 = args.get(3).unwrap_or(&"0".into()).parse()?;
+			let loss_pct: f32 = args.get(4).unwrap_or(&"0".into()).parse()?;
+
+			if dry_run {
+				println!(
+					"[dry-run] would execute:\n tc qdisc add dev {} root netem delay {}ms loss {}%",
+					iface, delay_ms, loss_pct
+				);
+				return Ok(());
+			}
+
+			qdisc::add_netem(iface, delay_ms, loss_pct)?;
+		}
+		//mod an existing one
+		"mod" => {
+			if args.len() < 5 {
+				bail!("mod requires delay_ms and loss_pct");
+			}
+			let delay_ms: u32 = args[3].parse()?;
+			let loss_pct: f32 = args[4].parse()?;
+			qdisc::change_netem(iface, delay_ms, loss_pct)?;
+		}
+		//delete the root qdisc
+		"del" => {
+			qdisc::del_root_qdisc(iface)?;
+		}
+		//unknown command
+		_=> bail!("Unknown command: {}", command),
+	}
+
+	Ok(())
 }

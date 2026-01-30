@@ -33,3 +33,11 @@ which = { version = "6.0.0", default-features = false }
 [profile.release.package.aya-qdisc-ebpf]
 debug = 2
 codegen-units = 1
+
+# Required for eBPF: panic unwinding is not supported.
+# This applies workspace-wide, including aya-qdisc-ebpf.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
