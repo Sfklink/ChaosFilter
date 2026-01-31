@@ -1,29 +1,44 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "cargo run --",
+    name = "chaosfilter",
     version,
     about = "Chaosfilter"
 )]
 pub struct Cli {
-    /// Target cgroup (e.g. my_cgroup or system.slice/nginx.service)
-    #[arg(long)]
-    pub cgroup: String,
+    #[command(subcommand)]
+    pub cmd: Command,
+}
 
-    /// Network interface (e.g. eth0 or enp5s0)
-    #[arg(long)]
-    pub iface: Option<String>,
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Show current qdisc state for the interface
+    Status { #[arg(long)] iface: String },
 
-    /// Inject latency (e.g. 200ms)
-    #[arg(long)]
-    pub latency: Option<String>,
+    /// Restore interface (delete root qdisc + clsact)
+    Reset { #[arg(long)] iface: String },
 
-    /// Packet loss percentage (e.g. 5%)
-    #[arg(long)]
-    pub loss: Option<String>,
+    /// Run network chaos. Optionally scope to a cgroup (via tc classifier eBPF).
+    Net {
+        /// Target cgroup (e.g. my_cgroup or system.slice/nginx.service)
+        #[arg(long)]
+        cgroup: String,
 
-    /// How long to run the test (e.g. 30s)
-    #[arg(long, default_value = "30s")]
-    pub duration: String,
+        /// Network interface (e.g. eth0 or enp5s0)
+        #[arg(long)]
+        iface: Option<String>,
+
+        /// Inject latency (e.g. 200ms)
+        #[arg(long)]
+        latency: Option<String>,
+
+        /// Packet loss percentage (e.g. 5%)
+        #[arg(long)]
+        loss: Option<String>,
+
+        /// How long to run the test (e.g. 30s)
+        #[arg(long, default_value = "30s")]
+        duration: String,
+    }
 }
