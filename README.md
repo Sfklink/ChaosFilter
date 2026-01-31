@@ -10,7 +10,7 @@
 
 ## Usage
 ```shell
-
+chaosfilter [OPTIONS] --cgroup <CGROUP>
 ```
 
 ## Build & Run
