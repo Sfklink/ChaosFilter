@@ -1,96 +1,174 @@
-//simple helpers for managing Linux traffic control (tc) qdiscs
-//from Rust user space
+// Simple helpers for managing Linux traffic control (tc) qdiscs
+// from Rust user space
 
 use anyhow::{Result, bail, Context};
-use std:: process::Command;
+use std::process::Command;
 
-//protects the control qdisc from being changed to ensure a good baseline to comapre results to
+// Protects the control qdisc from being changed to ensure a good baseline
 fn ensure_not_control(dev: &str) -> Result<()> {
-	if dev == "control" {
-		bail!("the 'control' interface is read-only and cannot be modified");
-	}
-	Ok(())
+    if dev == "control" {
+        bail!("the 'control' interface is read-only and cannot be modified");
+    }
+    Ok(())
 }
 
+/// Maps user-facing interface names to the *actual* interface where
+/// packets egress and should be shaped.
+///
+/// Returns:
+///   (real_interface_name, optional_namespace)
+fn resolve_tc_target<'a>(dev: &'a str) -> (&'a str, Option<&'static str>) {
+    match dev {
+        // User says "vethA", but packets egress from vethB inside the chaos netns
+        "vethA" => ("vethB", Some("chaos")),
+
+        // Baseline stays on the host, untouched
+        "control" => ("control", None),
+
+        // Default: assume host interface
+        other => (other, None),
+    }
+}
+
+/// Show qdiscs (host namespace only; useful for debugging)
 pub fn show_qdiscs(iface: Option<&str>) -> Result<String> {
-	//build: tc qdisc show [dev <iface>]
-	let mut cmd = Command::new("tc");
-	cmd.arg("qdisc").arg("show");
+    let mut cmd = Command::new("tc");
+    cmd.arg("qdisc").arg("show");
 
-	if let Some(iface) = iface {
-		cmd.arg("dev").arg(iface);
-	}
+    if let Some(iface) = iface {
+        cmd.arg("dev").arg(iface);
+    }
 
-	let output = cmd
-		.output()
-		.context("failed to execute 'tc qdisc show'")?;
+    let output = cmd
+        .output()
+        .context("failed to execute 'tc qdisc show'")?;
 
-	//tc sometimes write useful info to stderr but we only treat *command failure as an error
-	if !output.status.success() {
-		return Ok(String::new());
-	}
+    if !output.status.success() {
+        return Ok(String::new());
+    }
 
-	Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-//helper function that runs the 'tc' command with the provided args
-//returns an error if failure occurs instead of silently continuing
-fn run_tc(args: &[&str]) -> Result<()> {
-	let status = Command::new ("tc").args(args).status()?;
-	if !status.success() {
-		bail!("tc failed: {:?}", args);
-	}
-	Ok(())
-}
-
-//attaches a netem qdisc to the root of a network interface
-//params are:
-//	-dev: network interface name
-//	-delay_ms: fixed latency in millisecs
-//	-loss_pct: packet loss percentage
+/// Attach a netem qdisc to the correct egress interface
 pub fn add_netem(dev: &str, delay_ms: u32, loss_pct: f32) -> Result<()> {
-	ensure_not_control(dev)?;
+    ensure_not_control(dev)?;
 
-	let delay = format!("{delay_ms}ms");
-	let loss = format!("{loss_pct}%");
+    let delay = format!("{delay_ms}ms");
+    let loss = format!("{loss_pct}%");
 
-	run_tc(&[
-		"qdisc", "replace",
-		"dev", dev,
-		"root",
-		"netem",
-		"delay", &delay,
-		"loss", &loss,
-	])
+    let (real_dev, netns) = resolve_tc_target(dev);
+
+    if let Some(ns) = netns {
+        let status = Command::new("ip")
+            .args([
+                "netns", "exec", ns,
+                "tc", "qdisc", "replace",
+                "dev", real_dev,
+                "root",
+                "netem",
+                "delay", &delay,
+                "loss", &loss,
+            ])
+            .status()
+            .context("failed to apply netem in namespace")?;
+
+        if !status.success() {
+            bail!("tc netem failed inside namespace");
+        }
+    } else {
+        let status = Command::new("tc")
+            .args([
+                "qdisc", "replace",
+                "dev", real_dev,
+                "root",
+                "netem",
+                "delay", &delay,
+                "loss", &loss,
+            ])
+            .status()
+            .context("failed to apply netem")?;
+
+        if !status.success() {
+            bail!("tc netem failed");
+        }
+    }
+
+    Ok(())
 }
 
-//mods an existing root netem qdisc
-// will fail if none exist
-//call add_netem first
+/// Modify an existing netem qdisc
 pub fn change_netem(dev: &str, delay_ms: u32, loss_pct: f32) -> Result<()> {
-	ensure_not_control(dev)?;
+    ensure_not_control(dev)?;
 
-	let delay = format!("{delay_ms}ms");
-	let loss = format!("{loss_pct}%");
+    let delay = format!("{delay_ms}ms");
+    let loss = format!("{loss_pct}%");
 
-	run_tc(&[
-		"qdisc", "replace",
-		"dev", dev,
-		"root",
-		"netem",
-		"delay", &delay,
-		"loss", &loss,
-	])
+    let (real_dev, netns) = resolve_tc_target(dev);
+
+    if let Some(ns) = netns {
+        let status = Command::new("ip")
+            .args([
+                "netns", "exec", ns,
+                "tc", "qdisc", "replace",
+                "dev", real_dev,
+                "root",
+                "netem",
+                "delay", &delay,
+                "loss", &loss,
+            ])
+            .status()
+            .context("failed to modify netem in namespace")?;
+
+        if !status.success() {
+            bail!("tc netem modify failed inside namespace");
+        }
+    } else {
+        let status = Command::new("tc")
+            .args([
+                "qdisc", "replace",
+                "dev", real_dev,
+                "root",
+                "netem",
+                "delay", &delay,
+                "loss", &loss,
+            ])
+            .status()
+            .context("failed to modify netem")?;
+
+        if !status.success() {
+            bail!("tc netem modify failed");
+        }
+    }
+
+    Ok(())
 }
 
-//removes the root qdisc from a network interface
-pub fn del_root_qdisc(dev:&str) -> Result<()> {
-	ensure_not_control(dev)?;
+/// Remove the root qdisc from the correct interface
+pub fn del_root_qdisc(dev: &str) -> Result<()> {
+    ensure_not_control(dev)?;
 
-	run_tc(&[
-		"qdisc", "del",
-		"dev", dev,
-		"root",
-	])
+    let (real_dev, netns) = resolve_tc_target(dev);
+
+    if let Some(ns) = netns {
+        // Ignore failure here (qdisc may not exist)
+        let _ = Command::new("ip")
+            .args([
+                "netns", "exec", ns,
+                "tc", "qdisc", "del",
+                "dev", real_dev,
+                "root",
+            ])
+            .status();
+    } else {
+        let _ = Command::new("tc")
+            .args([
+                "qdisc", "del",
+                "dev", real_dev,
+                "root",
+            ])
+            .status();
+    }
+
+    Ok(())
 }
-
