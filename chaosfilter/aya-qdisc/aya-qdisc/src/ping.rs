@@ -13,18 +13,18 @@ pub struct PingStats {
 }
 
 impl fmt::Display for PingStats {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(
-			f,
-			"tx={} rx={} loss={:.1}% rtt(min/avg/max)={:.2}/{:.2}/{:.2} ms",
-			self.transmitted,
-			self.received,
-			self.loss_pct,
-			self.min_ms,
-			self.avg_ms,
-			self.max_ms
-		)
-	}
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "tx={} rx={} loss={:.1}% rtt(min/avg/max)={:.2}/{:.2}/{:.2} ms",
+            self.transmitted,
+            self.received,
+            self.loss_pct,
+            self.min_ms,
+            self.avg_ms,
+            self.max_ms
+        )
+    }
 }
 
 /// Public API expected by compare.rs
@@ -36,9 +36,7 @@ pub fn ping_path(iface: &str, target: &str, count: u32) -> Result<PingStats> {
         "control" => "control-peer",
         "vethA" => "vethB",
         other => {
-            return Err(anyhow!(
-                "ping_path: unsupported interface '{other}'"
-            ));
+            return Err(anyhow!("ping_path: unsupported interface '{other}'"));
         }
     };
 
@@ -53,14 +51,15 @@ pub fn ping_path(iface: &str, target: &str, count: u32) -> Result<PingStats> {
         .output()
         .map_err(|e| anyhow!("failed to execute ping: {e}"))?;
 
-    if !output.status.success() {
+    // ping may exit non-zero under packet loss; still parse stdout if present
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.trim().is_empty() {
         return Err(anyhow!(
-            "ping failed:\n{}",
+            "ping failed (no stdout):\n{}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
     parse_ping_output(&stdout)
 }
 
@@ -74,35 +73,16 @@ fn parse_ping_output(output: &str) -> Result<PingStats> {
 
     for line in output.lines() {
         if line.contains("packets transmitted") {
-            // Example:
             // "10 packets transmitted, 8 received, 20% packet loss, time 9009ms"
             let parts: Vec<&str> = line.split(',').collect();
             if parts.len() >= 3 {
-                transmitted = parts[0]
-                    .trim()
-                    .split_whitespace()
-                    .next()
-                    .unwrap()
-                    .parse()?;
-
-                received = parts[1]
-                    .trim()
-                    .split_whitespace()
-                    .next()
-                    .unwrap()
-                    .parse()?;
-
-                loss_pct = parts[2]
-                    .trim()
-                    .split('%')
-                    .next()
-                    .unwrap()
-                    .parse()?;
+                transmitted = parts[0].trim().split_whitespace().next().unwrap().parse()?;
+                received = parts[1].trim().split_whitespace().next().unwrap().parse()?;
+                loss_pct = parts[2].trim().split('%').next().unwrap().parse()?;
             }
         }
 
         if line.contains("min/avg/max") {
-            // Example:
             // "rtt min/avg/max/mdev = 12.3/45.6/78.9/1.2 ms"
             let stats = line.split('=').nth(1).unwrap().trim();
             let values: Vec<&str> = stats.split('/').collect();
@@ -125,16 +105,15 @@ fn parse_ping_output(output: &str) -> Result<PingStats> {
 }
 
 fn ensure_namespace_exists() -> Result<()> {
-    let status = Command::new("ip")
+    let out = Command::new("ip")
         .args(["netns", "list"])
         .output()?;
 
-    let namespaces = String::from_utf8_lossy(&status.stdout);
+    let namespaces = String::from_utf8_lossy(&out.stdout);
     if namespaces.lines().any(|l| l.starts_with("chaos")) {
         return Ok(());
     }
 
-    // Create namespace
     Command::new("ip")
         .args(["netns", "add", "chaos"])
         .status()?;

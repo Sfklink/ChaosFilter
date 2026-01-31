@@ -5,11 +5,11 @@ pub fn compare_with_control(modified_iface: &str) -> Result<()> {
     println!("\n=== Network Comparison (10 pings) ===\n");
 
     // CONTROL path (never modified)
-    let control = ping_path("control", "10.0.1.2", 10)?;
+    let control = ping_path("control", "10.0.1.1", 10)?;
 
     // MODIFIED path
     let modified = match modified_iface {
-        "vethA" => ping_path("vethA", "10.0.0.2", 10)?,
+        "vethA" => ping_path("vethA", "10.0.0.1", 10)?,
         _ => {
             println!("No comparison path defined for {modified_iface}");
             return Ok(());
