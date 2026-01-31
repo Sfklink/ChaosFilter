@@ -1,5 +1,5 @@
-use crate::cli::Cli;
 use anyhow::Result;
+use crate::cli::Cli;
 
 pub fn run(args: &Cli) -> Result<()> {
     println!("Running chaos test:");
@@ -9,8 +9,7 @@ pub fn run(args: &Cli) -> Result<()> {
     println!("  loss: {:?}", args.loss);
     println!("  duration: {}", args.duration);
 
-    // TODO:
-    // Call teammate's code here (library or binary)
+    // Call teammate's code here
 
     Ok(())
 }

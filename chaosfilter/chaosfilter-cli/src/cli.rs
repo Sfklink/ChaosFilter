@@ -1,14 +1,17 @@
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(name = "chaosfilter")]
-#[command(about = "Chaos testing CLI for Linux networking")]
+#[command(
+    name = "cargo run --",
+    version,
+    about = "Chaosfilter"
+)]
 pub struct Cli {
     /// Target cgroup (e.g. my_cgroup or system.slice/nginx.service)
     #[arg(long)]
     pub cgroup: String,
 
-    /// Network interface (e.g. eth0)
+    /// Network interface (e.g. eth0 or enp5s0)
     #[arg(long)]
     pub iface: Option<String>,
 

@@ -1,11 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "chaosfilter",
+    "chaosfilter", "chaosfilter-cli",
     "chaosfilter-common",
     "chaosfilter-ebpf",
 ]
-default-members = ["chaosfilter", "chaosfilter-common"]
+# If you change this only to "chaosfilter-cli" and run without a -p, it will only run chaosfilter-cli
+default-members = ["chaosfilter-cli"]
 
 [workspace.package]
 license = "MIT OR Apache-2.0"
