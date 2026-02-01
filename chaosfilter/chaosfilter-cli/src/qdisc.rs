@@ -1,17 +1,5 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, bail, Result};
 use std::process::Command;
-
-fn run(mut cmd: Command) -> Result<()> {
-    let status = cmd.status()
-        .context("failed to spawn command")?;
-    
-    if !status.success() {
-        anyhow::bail!("command failed: {:?}", cmd);
-    }
-    
-    Ok(())
-}
-
 
 /* ================= IFB HELPERS ================= */
 

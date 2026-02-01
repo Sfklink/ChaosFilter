@@ -37,7 +37,7 @@ async fn status_async(iface: &str) -> Result<String> {
     let mut q = handle.qdisc().get().index(ifindex).execute();
     while let Some(msg) = q.try_next().await? {
         // Defensive filter: some kernels/drivers can return extra qdiscs; we only want this iface.
-        if msg.header.index != ifindex as u32 {
+        if msg.header.index != ifindex as i32 {
             continue;
         }
 

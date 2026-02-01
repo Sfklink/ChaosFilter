@@ -14,14 +14,12 @@ pub fn validate_cgroup(cgroup: &str) -> Result<()> {
 
 pub fn validate_iface(iface: &str) -> Result<()> {
     // Check network interface exists (if provided)
-    if let Some(iface) = iface {
-        let status = Command::new("ip")
-            .args(["link", "show", iface])
-            .status()?;
+    let status = Command::new("ip")
+        .args(["link", "show", iface])
+        .status()?;
 
-        if !status.success() {
-            bail!("network interface not found: {}", iface);
-        }
+    if !status.success() {
+        bail!("network interface not found: {}", iface);
     }
 
     Ok(())
