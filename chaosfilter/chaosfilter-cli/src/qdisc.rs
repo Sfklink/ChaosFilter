@@ -174,6 +174,18 @@ pub fn add_netem(dev: &str, delay_ms: u32, loss_pct: f32) -> Result<()> {
             ])
             .status()
             .context("failed to apply egress netem")?;
+    } else {
+        Command::new("tc")
+            .args([
+                "qdisc", "replace",
+                "dev", real_dev,
+                "root",
+                "netem",
+                "delay", &delay,
+                "loss", &loss,
+            ])
+            .status()
+            .context("failed to apply egress netem on host")?;
     }
 
     if dev == "vethA" {
@@ -206,6 +218,18 @@ pub fn change_netem(dev: &str, delay_ms: u32, loss_pct: f32) -> Result<()> {
             ])
             .status()
             .context("failed to modify egress netem")?;
+    } else {
+        Command::new("tc")
+            .args([
+                "qdisc", "replace",
+                "dev", real_dev,
+                "root",
+                "netem",
+                "delay", &delay,
+                "loss", &loss,
+            ])
+            .status()
+            .context("failed to apply egress netem on host")?;
     }
 
     if dev == "vethA" {
@@ -230,6 +254,15 @@ pub fn del_root_qdisc(dev: &str) -> Result<()> {
                 "root",
             ])
             .status();
+    } else {
+        let _ = Command::new("tc")
+            .args([
+                "qdisc", "del",
+                "dev", real_dev,
+                "root",
+            ])
+            .status()
+            .context("failed to apply egress netem on host")?;
     }
 
     if dev == "vethA" {

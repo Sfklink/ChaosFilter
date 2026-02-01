@@ -10,7 +10,12 @@
 
 ## Usage
 ```shell
-chaosfilter [OPTIONS] --cgroup <CGROUP>
+chaosfilter <COMMAND>
+```
+
+Some commands require more options than others. You can find them by running:
+```shell
+chaosfilter <COMMAND> --help
 ```
 
 ## Build & Run
