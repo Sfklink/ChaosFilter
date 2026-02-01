@@ -2,7 +2,6 @@ mod cli;
 mod validate;
 mod runner;
 mod qdisc;
-mod tc;
 
 use clap::Parser;
 use anyhow::Result;
