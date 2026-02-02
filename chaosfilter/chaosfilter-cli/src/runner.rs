@@ -14,6 +14,31 @@ pub fn run(cli: &Cli) -> Result<()> {
             Ok(())
         }
 
+        Command::Update { iface, latency, loss } => {
+            validate::validate_iface(iface)?;
+            
+            // Parse latency "200ms" becomes 200 ms, else default which is also 200
+            let delay_ms = latency
+                .as_deref()
+                .map(parse_latency_ms)
+                .transpose()?
+                .unwrap_or(200);
+
+            // Parse loss "5%" becomes 5.0, else default which is 0
+            let loss_pct = loss
+                .as_deref()
+                .map(parse_loss_pct)
+                .transpose()?
+                .unwrap_or(0.0);
+
+            qdisc::change_netem(iface, delay_ms, loss_pct)
+                .context("failed to update netem")?;
+
+            println!("Updated dev={} with delay={}ms, loss={}%", iface, delay_ms, loss_pct);
+
+            Ok(())
+        }
+
         Command::Reset { iface } => {
             validate::validate_iface(iface)?;
             qdisc::del_root_qdisc(iface).context("failed to delete root qdisc")?;

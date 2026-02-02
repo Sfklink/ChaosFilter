@@ -16,6 +16,21 @@ pub enum Command {
     /// Show current qdisc state for the interface
     Status { #[arg(long)] iface: String },
 
+    /// Update qdisc 
+    Update { 
+        /// Network interface (e.g. eth0 or enp5s0)
+        #[arg(long)]
+        iface: String,
+
+        /// Inject latency (e.g. 200ms). If omitted, defaults to 200ms.
+        #[arg(long)]
+        latency: Option<String>,
+
+        /// Packet loss percentage (e.g. 5%). If omitted, defaults to 0%.
+        #[arg(long)]
+        loss: Option<String>,
+    },
+
     /// Restore interface (delete root qdisc + clsact)
     Reset { #[arg(long)] iface: String },
 
@@ -29,11 +44,11 @@ pub enum Command {
         #[arg(long)]
         iface: Option<String>,
 
-        /// Inject latency (e.g. 200ms)
+        /// Inject latency (e.g. 200ms). If omitted, defaults to 200ms.
         #[arg(long)]
         latency: Option<String>,
 
-        /// Packet loss percentage (e.g. 5%)
+        /// Packet loss percentage (e.g. 5%). f omitted, defaults to 0%.
         #[arg(long)]
         loss: Option<String>,
 

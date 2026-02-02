@@ -1,5 +1,7 @@
 # ChaosFilter
 
+---
+
 ## Prequisites
 1. stable rust toolchains: `rustup toolchain install stable`
 2. nightly rust toolchains: `rustup toolchain install nightly --component rust-src`
@@ -10,13 +12,31 @@
 
 ## Usage
 ```shell
-chaosfilter <COMMAND>
+Usage: chaosfilter <COMMAND>
+
+Commands:
+  status  Show current qdisc state for the interface
+  update  Update qdisc
+  reset   Restore interface (delete root qdisc + clsact)
+  net     Run network chaos. Optionally scope to a cgroup (via tc classifier eBPF)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
 ```
 
-Some commands require more options than others. You can find them by running:
+To see the arguments for each command, run the following:
 ```shell
 chaosfilter <COMMAND> --help
 ```
+
+Example:
+```shell
+chaosfilter net --help
+```
+
+---
 
 ## Build & Run
 Use `cargo build`, `cargo check`, `cargo run`, etc. as normal. Build and run your program with:
@@ -26,41 +46,24 @@ cargo build
 cargo run -- <args>
 ```
 
-Cargo build scripts are used to automatically build the eBPF correctly and include it in the
-program.
-
-## Cross-compiling on macOS
-
-Cross compilation should work on both Intel and Apple Silicon Macs.
-
+Example:
 ```shell
-CC=${ARCH}-linux-musl-gcc cargo build --package chaosfilter --release \
-  --target=${ARCH}-unknown-linux-musl \
-  --config=target.${ARCH}-unknown-linux-musl.linker=\"${ARCH}-linux-musl-gcc\"
+cargo build
+cargo run -- net --cgroup system.slice/sshd.service --iface enp5s0 --latency 300ms --loss 10% --duration 20s
 ```
-The cross-compiled program `target/${ARCH}-unknown-linux-musl/release/chaosfilter` can be
-copied to a Linux server or VM and run there.
 
-## License
+If a cgroup is not readily available, you can create one yourself named `chaos-test`:
+```shell
+systemd-run --user --scope -p "Delegate=yes" --unit=chaos-test bash
+```
 
-With the exception of eBPF code, chaosfilter is distributed under the terms
-of either the [MIT license] or the [Apache License] (version 2.0), at your
-option.
+Verify with the following:
+```shell
+cat /proc/self/cgroup
+ping -c 3 8.8.8.8
+```
 
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in this crate by you, as defined in the Apache-2.0 license, shall
-be dual licensed as above, without any additional terms or conditions.
-
-### eBPF
-
-All eBPF code is distributed under either the terms of the
-[GNU General Public License, Version 2] or the [MIT license], at your
-option.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in this project by you, as defined in the GPL-2 license, shall be
-dual licensed as above, without any additional terms or conditions.
-
-[Apache license]: LICENSE-APACHE
-[MIT license]: LICENSE-MIT
-[GNU General Public License, Version 2]: LICENSE-GPL2
+and use it in chaos filter run by doing:
+```shell
+chaosfilter --cgroup chaos-test <args>
+```
