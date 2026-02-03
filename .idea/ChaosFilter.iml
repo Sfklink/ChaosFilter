@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="EMPTY_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/chaos-filter-CLI/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/chaosfilter/aya-qdisc/aya-qdisc-common/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/chaosfilter/aya-qdisc/aya-qdisc-ebpf/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/chaosfilter/aya-qdisc/aya-qdisc/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/chaosfilter/control/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/chaosfilter/ebpf/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/chaosfilter/xtask/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/chaos-filter-CLI/target" />
+      <excludeFolder url="file://$MODULE_DIR$/chaosfilter/aya-qdisc/target" />
+      <excludeFolder url="file://$MODULE_DIR$/chaosfilter/target" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>

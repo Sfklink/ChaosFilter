@@ -1,9 +1,0 @@
-[target.bpfel-unknown-none]
-linker = "bpf-linker"
-rustflags = [
-	"-C", "linker-plugin-lto",
-	"-C", "debuginfo=2",
-]
-
-[unstable]
-build-std = ["core"]

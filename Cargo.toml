@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/chaosfilter_cli",
+    "crates/chaosfilter_control",
+    "crates/chaosfilter_common",
+    "crates/chaosfilter_injector_api",
+    "crates/chaosfilter_injector_qdisc",
+]

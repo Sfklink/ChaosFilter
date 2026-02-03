@@ -1,0 +1,6 @@
+
+// run after doing a build on it, point it at chaosfilter.toml
+ sudo target/debug/chaosfilter_cli run -c chaosfilter.toml
+
+
+Make sure that you edit chaosfilter.toml to reflect YOUR nic.  Not mine.  Not Ethan's.  Not Robert's.  Not Spencer's.  Not Marcos'.
