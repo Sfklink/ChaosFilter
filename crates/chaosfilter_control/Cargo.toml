@@ -1,0 +1,11 @@
+[package]
+name = "chaosfilter_control"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+aya = "0.12"
+chaosfilter_common = { path = "../chaosfilter_common" }
+chaosfilter_injector_api = { path = "../chaosfilter_injector_api" }
+chaosfilter_injector_qdisc = { path = "../chaosfilter_injector_qdisc" }

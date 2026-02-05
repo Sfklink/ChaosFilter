@@ -2,39 +2,85 @@
 
 ---
 
-## Prequisites
-1. stable rust toolchains: `rustup toolchain install stable`
-2. nightly rust toolchains: `rustup toolchain install nightly --component rust-src`
-3. (if cross-compiling) rustup target: `rustup target add ${ARCH}-unknown-linux-musl`
-4. (if cross-compiling) LLVM: (e.g.) `brew install llvm` (on macOS)
-5. (if cross-compiling) C toolchain: (e.g.) [`brew install filosottile/musl-cross/musl-cross`](https://github.com/FiloSottile/homebrew-musl-cross) (on macOS)
-6. bpf-linker: `cargo install bpf-linker` (`--no-default-features` on macOS)
+## Prerequisites
+
+- Linux system with `tc` (iproute2)
+- Root privileges (for qdisc manipulation)
+- Rust toolchain:
+```bash
+rustup toolchain install stable
+```
+Note that editing the qdisc requires running commands at root.
 
 ## Usage
-```shell
-Usage: chaosfilter <COMMAND>
+Mode 1: Config File.
+Run from a pre-existing *.toml file.
 
-Commands:
-  status  Show current qdisc state for the interface
-  update  Update qdisc
-  reset   Restore interface (delete root qdisc + clsact)
-  net     Run network chaos. Optionally scope to a cgroup (via tc classifier eBPF)
-  help    Print this message or the help of the given subcommand(s)
-
-Options:
-  -h, --help     Print help
-  -V, --version  Print version
+Example (Validate config):
+```bash
+cargo run -- run -c chaosfilter.toml
+```
+Example (Run Config):
+```bash
+cargo run -p chaosfilter_cli -- run -c chaosfilter.toml
+cargo run -p chaosfilter_cli -- validate -c chaosfilter.toml
 ```
 
-To see the arguments for each command, run the following:
-```shell
-chaosfilter <COMMAND> --help
+chaosfilter.toml:
+```toml
+name = "netem-test"
+
+[targets]
+cgroup = "system.slice"
+iface = "enp34s0"
+
+[schedule]
+duration_ms = 20000
+
+[features]
+load_ebpf = false
+
+[injectors.qdisc_netem]
+enabled = true
+delay_ms = 100
+loss_percent = 50
+```
+
+Mode 2: Inline flags. 
+
+Usage: 
+```bash
+chaosfilter run <COMMAND>
+
+--iface <iface>
+Network interface to apply chaos to (required for inline mode)
+
+--duration-ms <ms>
+Duration to hold chaos before revert (default: 5000)
+
+--netem-enabled <bool>
+Enable/disable qdisc netem (default: true)
+
+--netem-delay-ms <ms>
+Artificial latency in milliseconds
+
+--netem-loss-percent <percent>
+Packet loss percentage (e.g. 0.2)
+
+--cgroup <name>
+Optional cgroup (relative to /sys/fs/cgroup)
+(currently validated only; scoping via eBPF is future work)
+
+--load-ebpf
+Enable eBPF loading (feature-gated, optional)
 ```
 
 Example:
-```shell
-chaosfilter net --help
+```bash
+cargo build -p chaosfilter_cli
+sudo target/debug/chaosfilter_cli run --iface enp34s0 --duration-ms 5000 --netem-delay-ms 50 --netem-loss-percent 0.2
 ```
+
 
 ---
 
@@ -67,3 +113,11 @@ and use it in chaos filter run by doing:
 ```shell
 chaosfilter --cgroup chaos-test <args>
 ```
+
+Program can also be pointed a .toml file to act as config, eg.:
+```bash
+cargo build -p chaosfilter_cli
+target/debug/chaosfilter_cli run -c chaosfilter.toml
+```
+
+
