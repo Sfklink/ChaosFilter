@@ -1,0 +1,18 @@
+[package]
+name = "chaosfilter"
+version = "0.1.0"
+edition = "2021"
+default-run = "chaosfilter"
+
+[dependencies]
+chaosfilter_cli = { path = "crates/chaosfilter_cli" }
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/chaosfilter_cli",
+    "crates/chaosfilter_control",
+    "crates/chaosfilter_common",
+    "crates/chaosfilter_injector_api",
+    "crates/chaosfilter_injector_qdisc",
+]
