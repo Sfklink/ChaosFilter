@@ -6,6 +6,9 @@ use anyhow::{Context, bail, Result};
 use std::{env, fs, thread, time::Duration, path::{Path, PathBuf}, process::Command};
 use aya::Bpf;
 
+//added so the CLI works
+pub mod tc;
+
 pub fn validate_plan(plan: &Plan) -> Result<()> {
     // Check cgroup exists
     if let Some(cg) = &plan.targets.cgroup {

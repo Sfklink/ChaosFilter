@@ -1,0 +1,12 @@
+[package]
+name = "chaosfilter-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+chaosfilter_control = { path = "../crates/chaosfilter_control" }
+chaosfilter_common = { path = "../crates/chaosfilter_common" }
+
+toml = "0.8"
+chrono = "0.4"

@@ -1,0 +1,16 @@
+name = "netem-test"
+
+[targets]
+cgroup = "system.slice"
+iface = "enp34s0"
+
+[schedule]
+duration_ms = 20000
+
+[features]
+load_ebpf = false
+
+[injectors.qdisc_netem]
+enabled = true
+delay_ms = 100
+loss_percent = 50
