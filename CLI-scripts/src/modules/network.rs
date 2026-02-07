@@ -15,6 +15,13 @@
 
 //This seperation makes the CLI safer, more predictable,and easier to evolve when needed
 
+//HEY PAY ATTENTION TO THIS
+//I started with 2 qdisc control and the one to modify I changed to a before
+//and while the chaos is active. The names of anything that could be called
+//at a later point were not changed cause I am lazy. Just know if it mentions
+//'control' that is now 'before' and 'modified' became 'during'. The output did
+//change to reflect this update
+
 use std::io::{self, Write};
 use chaosfilter_control::tc;
 use std::process::Command;
@@ -35,15 +42,71 @@ struct PingStats {
 	rtt_max: f32,
 }
 
+//This finds the IP of the interface the user selected
+//allowing for the use of more than just using a qdics made by our
+//shell script
+fn get_iface_ip(iface: &str) -> Option<String> {
+	let output = Command::new("ip")
+		.args(["-4", "addr", "show", "dev", iface])
+		.output()
+		.ok()?;
+
+	let stdout = String::from_utf8_lossy(&output.stdout);
+
+	for line in stdout.lines() {
+		let line = line.trim();
+		if line.starts_with("inet ") {
+			let ip = line
+				.split_whitespace()
+				.nth(1)?
+				.split('/')
+				.next()?;
+			return Some(ip.to_string());
+		}
+	}
+
+	None
+}
+
+//This function checks to see if the user selected interface is in the host namespace
+//and if not where is it
+fn get_iface_netns(iface: &str) -> Option<String> {
+	let output = Command::new("ip")
+		.args(["link", "show", iface])
+		.output()
+		.ok()?;
+
+	let stdout = String::from_utf8_lossy(&output.stdout);
+
+	if let Some(pos) = stdout.find("link-netns") {
+		let ns = stdout[pos + "link-netns".len()..]
+			.trim()
+			.split_whitespace()
+			.next()?;
+		return Some(ns.to_string());
+	}
+
+	None
+}
+
 //This function is what does the 'ping'ing
 //Important without this no test results and thats bad
-
 fn run_ping_test(iface: &str, count: u32, target: &str) -> Option<PingStats> {
-	let output = std::process::Command::new("ping")
+	let iface_ip = get_iface_ip(iface)?;
+	let netns = get_iface_netns(iface);
+
+	let mut cmd = if let Some(ns) = netns {
+		let mut c = Command::new("ip");
+		c.args(["netns", "exec", &ns, "ping"]);
+		c
+	} else {
+		Command::new("ping")
+	};
+
+	let output = cmd
 		.args([
-			"-I", iface,
 			"-c", &count.to_string(),
-			target,
+			&iface_ip,
 		])
 		.output()
 		.ok()?;
@@ -89,13 +152,13 @@ fn print_comparison(iface: &str, count:u32, control: &PingStats, modified: &Ping
 	let output = format!(
 "=== Network Comparison ({count} pings) ===
 
-CONTROL (baseline):
+BEFORE CHAOS (baseline of {iface}):
   transmitted : {ct_tx}
   received    : {ct_rx}
   loss %      : {ct_loss}
   rtt (ms)    : min {ct_min} | avg {ct_avg} | max {ct_max}
 
-MODIFIED ({iface}):
+DURING CHAOS ({iface}):
   transmitted : {md_tx}
   received    : {md_rx}
   loss %      : {md_loss}
@@ -167,7 +230,6 @@ fn print_setup_required_message() {
 //reamin active until the user ends the program
 
 //returning to the main menu marks leaving network stack testing
-
 pub fn run() {
 	if !verify_network_environment() {
 		print_setup_required_message();
@@ -205,7 +267,6 @@ pub fn run() {
 
 //This runs 'tc qdisc show' and prints the results
 //It is a read only operation made to help the user see what can be modified
-
 fn show_qdisc_state() {
 	println!();
 	println!("----------------------");
@@ -232,7 +293,6 @@ fn show_qdisc_state() {
 }
 
 //Currently a place holder 
-
 fn create_root_qdisc() {
 	println!();
 	println!("Create root qdisc:")
@@ -248,17 +308,11 @@ fn create_root_qdisc() {
 
 //There is no persistant state
 //You can safely call repeatedly and is scoped to a single test run
-
 fn apply_netem() {
 	let ping_count = 10;
 	let ping_target = "8.8.8.8";
 
 	let iface = prompt("Interface (e.g. eth0)");
-
-	if iface == "control" {
-		println!("Error: 'control' is a protected interface and cannot be modified");
-		return;
-	}
 
 	let delay = prompt("Delay (ms)");
 	let loss = prompt("Packet loss (%)");
@@ -301,8 +355,8 @@ fn apply_netem() {
 	plan.injectors.qdisc_netem.delay_ms = delay_ms;
 	plan.injectors.qdisc_netem.loss_percent = loss_pct;
 
-	println!("Running baseline ping test (control)...");
-	let control_stats = match run_ping_test("control", ping_count, ping_target) {
+	println!("Running baseline ping test (before chaos)...");
+	let control_stats = match run_ping_test(&iface, ping_count, ping_target) {
 		Some(s) => s,
 		None => {
 			println!("Failed to collect baseline ping stats");
@@ -310,32 +364,44 @@ fn apply_netem() {
 		}
 	};
 
-	match run_plan(&plan) {
-		Ok(_) => {
-			println!("Netem applied, tested, and reset successfully");
-
-			println!("Running modified ping test ({})...", iface);
-			let modified_stats = match run_ping_test(&iface, ping_count, ping_target) {
-				Some(s) => s,
-				None => {
-					println!("Failed to collect modified ping stats");
-					return;
-				}
-			};
-
-			let report = print_comparison(
-				&iface,
-				ping_count,
-				&control_stats,
-				&modified_stats
-			);
-
-			write_results_file(&iface, &report);
-		}
+	let qdisc = match chaosfilter_control::apply_plan(&plan) {
+		Ok(q) => q,
 		Err(e) => {
-			println!("Error running chaos plan: {:#}", e);
+			println!("Error applying chaos plan: {:#}", e);
+			return;
 		}
+	};
+
+	println!(
+		"Running ping during chaos ({} ms window)...",
+		plan.schedule.duration_ms
+	);
+
+	let modified_stats = match run_ping_test(&iface, ping_count, ping_target) {
+		Some(s) => s,
+		None => {
+			println!("Failed to collect chaos ping stats");
+			let _ = chaosfilter_control::revert_plan(qdisc, &plan);
+			return;
+		}
+	};
+
+	std::thread::sleep(std::time::Duration::from_millis(plan.schedule.duration_ms));
+
+	if let Err(e) = chaosfilter_control::revert_plan(qdisc, &plan) {
+		println!("Warning: failed to fully revert chaos: {:#}", e);
 	}
+
+	println!("Netem applied, observed, and reset successfully");
+
+	let report = print_comparison(
+		&iface,
+		ping_count,
+		&control_stats,
+		&modified_stats,
+	);
+
+	write_results_file(&iface, &report);
 }
 
 //Deltes the root qdisc on a given interface
@@ -347,15 +413,8 @@ fn apply_netem() {
 //This is NOT a state reset
 //It will not restore a previously existing qdisc configuration
 //It is intended as a cleanup/recovery mechanism and a way to force a known baseline
-
 fn delete_root_qdisc() {
 	let iface = prompt("Interface (e.g. eth0)");
-
-	if iface == "control" {
-		println!("Error: control is a protected interface and cannot be modified");
-		return;
-	}
-
 
 	println!("Deleting root qdisc on interface {}", iface);
 
@@ -369,7 +428,6 @@ fn delete_root_qdisc() {
 
 //This helper is used for all interaction within the network stack
 //module to keep I/O behavior consistant and clean
-
 fn prompt(label: &str) -> String {
 	print!("{}: ", label);
 	io::stdout().flush().unwrap();
