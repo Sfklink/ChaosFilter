@@ -1,0 +1,13 @@
+=== Network Comparison (10 pings) ===
+
+CONTROL (baseline):
+  transmitted : 10
+  received    : 0
+  loss %      : 100
+  rtt (ms)    : min 0 | avg 0 | max 0
+
+MODIFIED (vethA):
+  transmitted : 10
+  received    : 0
+  loss %      : 100
+  rtt (ms)    : min 0 | avg 0 | max 0

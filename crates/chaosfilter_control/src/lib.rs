@@ -6,6 +6,9 @@ use anyhow::{Context, bail, Result};
 use std::{env, fs, thread, time::Duration, path::{Path, PathBuf}, process::Command};
 use aya::Bpf;
 
+//added so the CLI works
+pub mod tc;
+
 pub fn validate_plan(plan: &Plan) -> Result<()> {
     // Check cgroup exists
     if let Some(cg) = &plan.targets.cgroup {
@@ -52,19 +55,25 @@ pub fn load_ebpf_object() -> Result<Bpf> {
     Bpf::load(&bytes).context("failed to load eBPF object")
 }
 
+//For the CLI to work I needed to redo this section. Nothing is being changed
+//The CLI just needs to seperate the running of the tests and the reset so 
+//it can get the data from the tests
 
-pub fn run_plan(plan: &Plan) -> Result<()> {
+//This function starts the plan
+pub fn apply_plan(plan: &Plan) -> Result<QdiscNetem> {
     validate_plan(plan)?;
 
-    // qdisc injector (explicit wiring = impossible to “forget to call”)
+    //qdisc injector
     QdiscNetem::validate(plan)?;
     let mut qdisc = QdiscNetem::default();
     qdisc.apply(plan)?;
 
-    println!("[control] holding chaos for {} ms", plan.schedule.duration_ms);
-    thread::sleep(Duration::from_millis(plan.schedule.duration_ms));
+    Ok(qdisc)
+}
 
-    qdisc.revert()?; // best effort cleanup
+//This function reverts the plan
+pub fn revert_plan(mut qdisc: QdiscNetem, plan: &Plan) -> Result<()> {
+    qdisc.revert()?; //best effort clean up
 
     if plan.features.load_ebpf {
         let _bpf = load_ebpf_object()?;
@@ -75,3 +84,21 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 
     Ok(())
 }
+
+//Rewritting this to use the new fucntions
+//Base line the CLI needed to seperate the running of the test and
+//the reverting of the params to get the data
+pub fn run_plan(plan: &Plan) -> Result<()> {
+    let qdisc = apply_plan(plan)?;
+
+    println!(
+        "[control] holding chaos for {} ms",
+        plan.schedule.duration_ms
+    );
+    thread::sleep(Duration::from_millis(plan.schedule.duration_ms));
+
+    revert_plan(qdisc, plan)?;
+
+    Ok(())
+}
+
