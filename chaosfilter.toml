@@ -1,8 +1,7 @@
 name = "netem-test"
 
 [targets]
-cgroup = "system.slice"
-iface = "enp34s0"
+iface = "enp5s0"
 
 [schedule]
 duration_ms = 20000

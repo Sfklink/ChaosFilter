@@ -1,0 +1,11 @@
+[package]
+name = "chaosfilter-controller"
+version = "0.1.0"
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+aya = { workspace = true }
+ctrlc = { workspace = true }
+chaosfilter-common = { path = "../chaosfilter-common" }
