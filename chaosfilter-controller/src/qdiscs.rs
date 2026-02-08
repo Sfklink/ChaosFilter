@@ -2,8 +2,6 @@ use anyhow::{anyhow, Context, Result};
 use chaosfilter_common::Plan;
 use std::process::Command;
 
-// use crate::injector::Injector;
-
 #[derive(Default)]
 pub struct QdiscNetem {
     applied: bool,

@@ -1,4 +1,3 @@
-use injector::Injector;
 use qdiscs::QdiscNetem;
 use chaosfilter_common::Plan;
 
@@ -91,6 +90,15 @@ pub fn revert_plan(mut qdisc: QdiscNetem, plan: &Plan) -> Result<()> {
 //the reverting of the params to get the data
 pub fn run_plan(plan: &Plan) -> Result<()> {
     let qdisc = apply_plan(plan)?;
+
+    // If Ctrl+C is pressed, cleanup
+    if let Some(iface) = plan.targets.iface.as_deref() {
+        let dev_owned = iface.to_string();
+        ctrlc::set_handler(move || {
+            let _ = crate::tc::del_root_qdisc(&dev_owned);
+            std::process::exit(130); // 130 = interrupted (Ctrl + C)
+        })?;
+    }
 
     println!(
         "[control] holding chaos for {} ms",

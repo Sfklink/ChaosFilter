@@ -32,6 +32,7 @@ tokio = { version = "1.40.0", default-features = false }
 which = { version = "6.0.0", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive"] }
 toml = "0.9.11"
+ctrlc = "3.5.1"
 
 [profile.release.package.chaosfilter-ebpf]
 debug = 2

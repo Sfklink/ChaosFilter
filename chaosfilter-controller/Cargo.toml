@@ -7,4 +7,5 @@ edition.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 aya = { workspace = true }
+ctrlc = { workspace = true }
 chaosfilter-common = { path = "../chaosfilter-common" }
