@@ -1,8 +1,0 @@
-[package]
-name = "chaosfilter_injector_api"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-anyhow = "1"
-chaosfilter_common = { path = "../chaosfilter_common" }
