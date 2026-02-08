@@ -1,0 +1,15 @@
+name = "netem-test"
+
+[targets]
+iface = "enp5s0"
+
+[schedule]
+duration_ms = 20000
+
+[features]
+load_ebpf = false
+
+[injectors.qdisc_netem]
+enabled = true
+delay_ms = 100
+loss_percent = 50
