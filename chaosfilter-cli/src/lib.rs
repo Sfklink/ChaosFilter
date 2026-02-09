@@ -1,3 +1,5 @@
+pub mod cli;
+pub mod modules;
 use anyhow::{anyhow, Result};
 use clap::{ArgGroup, Parser, Subcommand};
 use chaosfilter_common::{Features, Injectors, Plan, QdiscNetem, Schedule, Targets};
