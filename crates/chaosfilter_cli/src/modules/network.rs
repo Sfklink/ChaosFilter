@@ -27,8 +27,9 @@ use chaosfilter_control::tc;
 use std::process::Command;
 use chaosfilter_common::Plan;
 use chaosfilter_control::run_plan;
-
+use std::os::unix::fs::PermissionsExt;
 use std::fs;
+use std::path::PathBuf;
 
 //This struct is how we do the ping comare between the control and the modified qdisc
 //Important for none coder understanding
@@ -195,9 +196,16 @@ fn write_results_file(iface: &str, contents: &str) {
 
 	if let Err(e) = std::fs::write(&path, contents) {
 		println!("Warning: could not write results file: {}", e);
-	} else {
-		println!("Results written to {}", path);
 	}
+
+	if let Err(e) = std::fs::set_permissions(
+		&path,
+		std::fs::Permissions::from_mode(0o644),
+		) {
+		println!("Warning: could not set permissions on results file: {}", e);
+	}
+
+	println!("Results written to {}", path);
 }
 
 //This function verifies that the shell scripts have been run
@@ -292,11 +300,58 @@ fn show_qdisc_state() {
 	}
 }
 
-//Currently a place holder 
+//This function allows the user to create a new paied veth interface
+//called what ever that would like. It runs a shell script
+//For more detail look at comments in /CLI-scripts/scripts/chaos-net-add-iface.sh 
 fn create_root_qdisc() {
 	println!();
-	println!("Create root qdisc:")
-	//Not yet implemented will update this when possible
+	println!("Create root qdisc:");
+	
+	let name = prompt("Interface name");
+
+	if name.is_empty() {
+		println!("ERROR: interface name cannot be empty");
+		return;
+	}
+
+	if name.ends_with("-peer") {
+		println!("ERROR: interface name must not end with '-peer'");
+		return;
+	}
+
+	let script_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+		.parent().unwrap().parent().unwrap()
+		.join("scripts/chaos-net-add-iface.sh");
+
+	let script_path = match script_path.canonicalize() {
+		Ok(p) => p,
+		Err(e) => {
+			println!("ERROR: could not resolve script path: {}", e);
+			return;
+		}
+	};
+
+	println!("Creating interface pair '{} <-> {}-peer'...", name, name);
+
+	let status = Command::new("sudo")
+		.args([
+			"bash", 
+			script_path.to_str().unwrap(),
+			&name,
+		])
+		.status();
+
+	match status {
+		Ok(s) if s.success() => {
+			println!("Interface '{}' created successfully", name);
+		}
+		Ok(_) => {
+			println!("ERROR: interface creation failed");
+		}
+		Err(e) => {
+			println!("ERROR: failed to execute add-iface script: {}", e);
+		}
+	}
 }
 
 //Applies temporary netem confiurations to an interface
@@ -414,13 +469,53 @@ fn apply_netem() {
 //It will not restore a previously existing qdisc configuration
 //It is intended as a cleanup/recovery mechanism and a way to force a known baseline
 fn delete_root_qdisc() {
-	let iface = prompt("Interface (e.g. eth0)");
+	println!();
+	println!("Delete interface:");
 
-	println!("Deleting root qdisc on interface {}", iface);
+	let name = prompt("Interface name");
 
-	match tc::del_root_qdisc(&iface) {
-		Ok(_) => println!("Root qdisc deleted"),
-		Err(e) => println!("Error deleting root qdisc: {:#}",e),
+	if name.is_empty() {
+		println!("ERROR: interface name cannot be empty");
+		return;
+	}
+
+	if name.ends_with("-peer") {
+		println!("ERROR: specify base interface name(not -peer)");
+		return;
+	}
+
+	let script_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+		.parent().unwrap().parent().unwrap()
+		.join("scripts/chaos-net-del-iface.sh");
+
+	let script_path = match script_path.canonicalize() {
+		Ok(p) => p,
+		Err(e) => {
+			println!("ERROR: coulf not resolve delete script path: {}", e);
+			return;
+		}
+	};
+
+	println!("Deleting interface pair '{} <-> {}-peer'...", name, name);
+
+	let status = Command::new("sudo")
+		.args([
+			"bash",
+			script_path.to_str().unwrap(),
+			&name,
+		])
+		.status();
+
+	match status {
+		Ok(s) if s.success() => {
+			println!("Interface '{}' deleted successfully", name);
+		}
+		Ok(_) => {
+			println!("ERROR: interface deletion failed");
+		}
+		Err(e) => {
+			println!("ERROR: failed to execute delete script: {}", e);
+		}
 	}
 }
 

@@ -6,8 +6,8 @@
 //Keeping main small makes it easier to reason about startup actions
 //and avoids joining high-level app flow with the user interaction
 
-mod cli;
-mod modules;
+use chaosfilter_cli::cli;
+use chaosfilter_cli::modules;
 
 fn main() {
 	//Starts the CLI loop

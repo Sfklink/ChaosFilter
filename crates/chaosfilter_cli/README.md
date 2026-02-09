@@ -1,4 +1,3 @@
-  GNU nano 7.2                        CLI-scripts/README.md *                                
 # ChaosFilter CLI
 
 This directory contains the **interactive command-line interface (CLI)** for ChaosFilter. 
@@ -31,14 +30,50 @@ sudo ./scripts/chaos-net-setup.sh
 ```
 Cleanup is optional but highly recommended
 
+Mode 1: Config file. Run from a pre-existing *.toml file
 
 Run the program from the root DIR with
 ```bash
-sudo -E cargo run -p chaosfilter-cli
+sudo -E cargo run -p chaosfilter_cli --bin interactive
 ```
 
+Mode 2: Inline flags. 
+
+Usage: 
+```bash
+chaosfilter run <COMMAND>
+
+--iface <iface>
+Network interface to apply chaos to (required for inline mode)
+
+--duration-ms <ms>
+Duration to hold chaos before revert (default: 5000)
+
+--netem-enabled <bool>
+Enable/disable qdisc netem (default: true)
+
+--netem-delay-ms <ms>
+Artificial latency in milliseconds
+
+--netem-loss-percent <percent>
+Packet loss percentage (e.g. 0.2)
+
+--cgroup <name>
+Optional cgroup (relative to /sys/fs/cgroup)
+(currently validated only; scoping via eBPF is future work)
+
+--load-ebpf
+Enable eBPF loading (feature-gated, optional)
+```
+
+Example:
+```bash
+cargo build -p chaosfilter_cli
+sudo target/debug/chaosfilter_cli run --iface enp34s0 --duration-ms 5000 --netem-delay-ms 50 --netem-loss-percent 0.2
+``` 
+
 ## Overview
-On start you will be presented with the following menu
+On start with mode 1 you will be presented with the following menu
 ```bash
 What system would you like to test?
 1) Network Stack
@@ -60,8 +95,6 @@ Network Stack options:
 5) Return to main menu
 >
 ```
-Again navigation is done through the corresponding number. Option 2
-is not implemented at this time and due to that option 4 has not been tested.
-All other options work
+Again navigation is done through the corresponding number
 
 For more information on how the backend works see the README in the root DIR (ChaosFilter)

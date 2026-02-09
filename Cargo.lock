@@ -170,24 +170,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "chaosfilter-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chaosfilter_common",
- "chaosfilter_control",
- "chrono",
- "toml",
-]
-
-[[package]]
 name = "chaosfilter_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "chaosfilter_common",
  "chaosfilter_control",
+ "chrono",
  "clap",
+ "toml",
 ]
 
 [[package]]

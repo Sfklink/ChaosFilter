@@ -15,5 +15,4 @@ members = [
     "crates/chaosfilter_common",
     "crates/chaosfilter_injector_api",
     "crates/chaosfilter_injector_qdisc",
-    "CLI-scripts",
 ]
