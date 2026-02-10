@@ -29,7 +29,7 @@ pub fn show_main_menu() -> u32 {
 	println!("3) CPU / Scheduling");
 	println!("4) Exit");
 
-	println!(">");
+	print!(">");
 	io::stdout().flush().unwrap();
 
 	let mut input = String::new();

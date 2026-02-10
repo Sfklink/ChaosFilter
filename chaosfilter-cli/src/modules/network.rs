@@ -66,7 +66,6 @@ fn get_iface_netns(iface: &str) -> Option<String> {
 ///
 /// # Arguments
 /// * `iface` - Interface name to test.
-/// * `count` - Number of ping packets to send.
 /// * `target` - Intended target host/IP (currently unused; the function pings the interface IP).
 ///
 /// # Returns
@@ -74,10 +73,9 @@ fn get_iface_netns(iface: &str) -> Option<String> {
 /// Returns `None` if `ping` fails or output cannot be collected or parsed.
 ///
 /// # Side Effects
-/// Executes either:
-/// - `ping -c <count> <iface_ip>` (host namespace), or
-/// - `ip netns exec <ns> ping -c <count> <iface_ip>`.
-fn run_ping_test(iface: &str, count: u32, target: &str) -> Option<PingStats> {
+/// Executes:
+/// - `ip netns exec <ns> ping -I <iface> <target>`.
+fn run_ping_test(iface: &str, target: &str) -> Option<PingStats> {
 	let netns = get_iface_netns(iface);
 
 	let mut cmd = if let Some(ns) = netns {
@@ -90,7 +88,6 @@ fn run_ping_test(iface: &str, count: u32, target: &str) -> Option<PingStats> {
 
 	let output = cmd
 		.args([
-			"-c", &count.to_string(),
 			"-I", iface, target
 		])
 		.output()
@@ -145,9 +142,9 @@ fn run_ping_test(iface: &str, count: u32, target: &str) -> Option<PingStats> {
 ///
 /// # Side Effects
 /// Prints the report to standard output.
-fn print_comparison(iface: &str, count:u32, control: &PingStats, modified: &PingStats) -> String {
+fn print_comparison(iface: &str, duration: u64, control: &PingStats, modified: &PingStats) -> String {
 	let output = format!(
-"\n\n=== Network Comparison ({count} pings) ===
+"\n\n=== Network Comparison (Duration: {duration} ms) ===
 
 BEFORE CHAOS (baseline of {iface}):
   transmitted : {ct_tx}
@@ -371,13 +368,13 @@ fn create_root_qdisc() {
 /// # Panics
 /// Panics if stdin/stdout operations fail (uses `unwrap()`).
 fn apply_netem() {
-	let ping_count = 10;
 	let ping_target = "8.8.8.8";
 
 	let iface = prompt("Interface (e.g., enp5s0, wlo1)");
 
 	let delay = prompt("Delay (ms)");
 	let loss = prompt("Packet loss (%)");
+	let duration = prompt("Duration (ms)");
 
 	let delay_ms: u32 = match delay.parse() {
 		Ok(v) => v,
@@ -394,6 +391,15 @@ fn apply_netem() {
 			return;
 		}
 	};
+
+	let duration_ms: u64 = match duration.parse() {
+		Ok(v) => v,
+		Err(_) => {
+			println!("Invalid duration value");
+			return;
+		}
+	};
+
 	println!();
 
 	let config_contents = match fs::read_to_string("chaosfilter.toml") {
@@ -415,9 +421,10 @@ fn apply_netem() {
 	plan.targets.iface = Some(iface.clone());
 	plan.injectors.qdisc_netem.delay_ms = delay_ms;
 	plan.injectors.qdisc_netem.loss_percent = loss_pct;
+	plan.injectors.qdisc_netem.duration = duration_ms;
 
 	println!("Running baseline ping test (before chaos)...");
-	let control_stats = match run_ping_test(&iface, ping_count, ping_target) {
+	let control_stats = match run_ping_test(&iface, ping_target) {
 		Some(s) => s,
 		None => {
 			println!("Failed to collect baseline ping stats");
@@ -438,7 +445,7 @@ fn apply_netem() {
 		plan.schedule.duration_ms
 	);
 
-	let modified_stats = match run_ping_test(&iface, ping_count, ping_target) {
+	let modified_stats = match run_ping_test(&iface, ping_target) {
 		Some(s) => s,
 		None => {
 			println!("Failed to collect chaos ping stats");
@@ -457,7 +464,7 @@ fn apply_netem() {
 
 	let report = print_comparison(
 		&iface,
-		ping_count,
+		duration_ms,
 		&control_stats,
 		&modified_stats,
 	);
@@ -518,7 +525,7 @@ fn delete_root_qdisc() {
 			println!("Root qdisc deleted successfully from '{}'", iface);
 		}
 		Ok(_) => {
-			println!("ERROR: failed to delete root qdisc from '{}'", iface);
+			println!("ERROR: failed to delete root qdisc from '{}' (there may not be one)", iface);
 		}
 		Err(e) => {
 			println!("ERROR: failed to execute tc: {}", e);

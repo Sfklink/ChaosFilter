@@ -60,6 +60,10 @@ pub struct QdiscNetem {
     /// Packet loss percentage (`0.0`–`100.0`).
     #[serde(default)]
     pub loss_percent: f32,
+
+    /// Duration in milliseconds.
+    #[serde(default)]
+    pub duration: u64,
 }
 
 /// Target selection for chaos execution.

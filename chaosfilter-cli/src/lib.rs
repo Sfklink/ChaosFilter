@@ -180,6 +180,7 @@ fn plan_from_args(args: RunLikeArgs) -> Result<Plan> {
             qdisc_netem: QdiscNetem {
                 delay_ms: args.netem_delay_ms,
                 loss_percent: args.netem_loss_percent,
+                duration: args.duration_ms,
             },
         },
     })
