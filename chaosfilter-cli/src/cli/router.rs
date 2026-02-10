@@ -1,14 +1,22 @@
-//Routes user to the correct module based on their selection
-
-//dispatcher is the centralized dispatcher that menu options to
-//module entry points
-
-//Centralizing this logic makes adding, removimg, or reordering
-//modules easy and prevents modules from touching the menu or other module code
+//! Router
+//! 
+//! Central dispatcher that maps menu options to module entry points.
 
 use crate::modules;
 
-//Dispatches execution based on the users selection on the main menu
+/// Routes the user to the specified module.
+/// 
+/// # Arguments
+/// * `choice` - Numeric menu option inputted by the user.
+/// 
+/// # Returns
+/// Returns `true` if execution can continue, or `false` if the application should terminate.
+/// 
+/// # Side Effects
+/// Prints status messages to standard output and invokes one of:
+/// - [`crate::modules::network::run`]
+/// - [`crate::modules::disk::run`]
+/// - [`crate::modules::cpu::run`]
 pub fn route(choice: u32) -> bool {
 	match choice {
 		1 => {

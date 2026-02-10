@@ -1,20 +1,26 @@
-//Handles all the user menu prompts and input parsing
-
-//menu will display the menu options, read the user input,
-//and return a normalized selection
-
-//There is no logic handling, validation beyond parsing, or module dispatching
+//! Main Menu Function
+//! 
+//! Shows the main menu, parses the input from stdin, 
+//! and returns the parsed selection.
 
 use std::io::{self, Write};
 
-//Shows the main menu and returns the users selection
-
-//Return options:
-// - A # relating to the users selection
-// - A 0 if parsing failed
-
-//The simple design is resilient to invalid user input
-
+/// Displays the menu of ChaosFilter and parses the user's input.
+/// 
+/// This function will print all of the available subsystems that can 
+/// be tested with ChaosFilter and blocks until input is received.
+/// 
+/// # Returns
+/// A numeric selection:
+/// - `1` → Network Stack
+/// - `2` → Disk I/O
+/// - `3` → CPU / Scheduling
+/// - `4` → Exit
+/// 
+/// Returns '0' if the input is invalid or cannot be parsed.
+/// 
+/// # Panics
+/// Panics if reading from standard input or flushing stdout fails.
 pub fn show_main_menu() -> u32 {
 	println!();
 	println!("What system would you like to test?");
