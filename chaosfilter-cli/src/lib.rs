@@ -1,11 +1,19 @@
-pub mod cli;
-pub mod modules;
 use anyhow::{anyhow, Result};
 use clap::{ArgGroup, Parser, Subcommand};
 use chaosfilter_common::{Features, Injectors, Plan, QdiscNetem, Schedule, Targets};
+use chaosfilter_cli::cli;
+use chaosfilter_cli::modules;
+
+pub mod cli;
+pub mod modules;
 
 #[derive(Parser, Debug)]
-#[command(name = "chaosfilter-cli", version, about = "ChaosFilter control CLI")]
+#[command(
+    name = "chaosfilter-cli", 
+    version, 
+    about = "ChaosFilter CLI & UI"
+)]
+
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -18,6 +26,9 @@ pub enum Commands {
 
     /// Run the chaos plan (apply -> hold -> revert)
     Run(RunLikeArgs),
+
+    /// Use the Menu GUI to run your Chaos Plan
+    Menu,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -76,6 +87,9 @@ where
             let plan = plan_from_args(args)?;
             chaosfilter_controller::run_plan(&plan)?;
             println!("Run complete.");
+        }
+        Commands::Menu => {
+            cli::run();
         }
     }
 
