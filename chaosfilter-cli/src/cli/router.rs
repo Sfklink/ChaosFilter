@@ -9,10 +9,7 @@
 use crate::modules;
 
 //Dispatches execution based on the users selection on the main menu
-
-//Returns true to keep going and false to end
-
-pub fn dispatch(choice: u32) -> bool {
+pub fn route(choice: u32) -> bool {
 	match choice {
 		1 => {
 			println!("Loading Network Stack module...");

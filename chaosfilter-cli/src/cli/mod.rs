@@ -9,7 +9,7 @@
 //but not *how* the modules work
 
 pub mod menu;
-pub mod dispatcher;
+pub mod router;
 
 //Starts the CLI and keeps it going until the user exits
 
@@ -20,7 +20,7 @@ pub fn run() {
 		let choice = menu::show_main_menu();
 
 		//Dispatch returns false when the user exits
-		if !dispatcher::dispatch(choice) {
+		if !router::route(choice) {
 			break;
 		}
 	}
