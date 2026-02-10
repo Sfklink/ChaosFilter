@@ -36,7 +36,7 @@ pub enum Commands {
     Validate(RunLikeArgs),
 
     /// Run the chaos plan (apply -> hold -> revert)
-    Run(RunLikeArgs),
+    Chaos(RunLikeArgs),
 
     /// Launch the interactive menu UI.
     Menu,
@@ -121,12 +121,10 @@ where
         Commands::Validate(args) => {
             let plan = plan_from_args(args)?;
             chaosfilter_controller::validate_plan(&plan)?;
-            println!("Config OK: {:?}", plan);
         }
-        Commands::Run(args) => {
+        Commands::Chaos(args) => {
             let plan = plan_from_args(args)?;
             chaosfilter_controller::run_plan(&plan)?;
-            println!("Run complete.");
         }
         Commands::Menu => {
             cli::run();

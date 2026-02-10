@@ -54,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
     }
     let Opt { iface } = opt;
     // error adding clsact to the interface if it is already added is harmless
-    // the full cleanup can be done with 'sudo tc qdisc del dev eth0 clsact'.
+    // the full cleanup can be done with 'sudo tc qdisc del dev (iface e.g., enp5s0, wlo1) clsact'.
     let _ = tc::qdisc_add_clsact(&iface);
     let program: &mut SchedClassifier = ebpf.program_mut("chaosfilter").unwrap().try_into()?;
     program.load()?;

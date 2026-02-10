@@ -82,7 +82,7 @@ pub fn del_root_qdisc(iface: &str) -> Result<()> {
     // Best effort: do not hard-fail on cleanup
     if !status.success() {
         eprintln!(
-            "[control] warning: failed to delete root qdisc on {} (may not exist)",
+            "WARNING: failed to delete root qdisc on {} (may not exist)",
             iface
         );
     }

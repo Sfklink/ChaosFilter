@@ -15,7 +15,6 @@ use std::io::{self, Write};
 use std::process::Command;
 use std::os::unix::fs::PermissionsExt;
 use std::fs;
-use std::path::PathBuf;
 
 /// Summary statistics parsed from `ping` output.
 ///
@@ -29,40 +28,6 @@ struct PingStats {
 	rtt_min: f32,
 	rtt_avg: f32,
 	rtt_max: f32,
-}
-
-/// Finds the IPv4 address assigned to the specified `iface`.
-///
-/// # Arguments
-/// * `iface` - Interface name (e.g. `enp5s0`, `wlo1`, `vethA`, `vethB`, etc.).
-///
-/// # Returns
-/// Returns `Some(ip)` (e.g. `"192.168.1.10"`) if an IPv4 address is found,
-/// otherwise returns `None`.
-///
-/// # Side Effects
-/// Executes `ip -4 addr show dev <iface>`.
-fn get_iface_ip(iface: &str) -> Option<String> {
-	let output = Command::new("ip")
-		.args(["-4", "addr", "show", "dev", iface])
-		.output()
-		.ok()?;
-
-	let stdout = String::from_utf8_lossy(&output.stdout);
-
-	for line in stdout.lines() {
-		let line = line.trim();
-		if line.starts_with("inet ") {
-			let ip = line
-				.split_whitespace()
-				.nth(1)?
-				.split('/')
-				.next()?;
-			return Some(ip.to_string());
-		}
-	}
-
-	None
 }
 
 /// Detects whether `iface` lives in a non-default network namespace.
@@ -102,7 +67,7 @@ fn get_iface_netns(iface: &str) -> Option<String> {
 /// # Arguments
 /// * `iface` - Interface name to test.
 /// * `count` - Number of ping packets to send.
-/// * `_target` - Intended target host/IP (currently unused; the function pings the interface IP).
+/// * `target` - Intended target host/IP (currently unused; the function pings the interface IP).
 ///
 /// # Returns
 /// Returns `Some(PingStats)` if ping output can be collected and parsed.
@@ -112,8 +77,7 @@ fn get_iface_netns(iface: &str) -> Option<String> {
 /// Executes either:
 /// - `ping -c <count> <iface_ip>` (host namespace), or
 /// - `ip netns exec <ns> ping -c <count> <iface_ip>`.
-fn run_ping_test(iface: &str, count: u32, _target: &str) -> Option<PingStats> {
-	let iface_ip = get_iface_ip(iface)?;
+fn run_ping_test(iface: &str, count: u32, target: &str) -> Option<PingStats> {
 	let netns = get_iface_netns(iface);
 
 	let mut cmd = if let Some(ns) = netns {
@@ -127,7 +91,7 @@ fn run_ping_test(iface: &str, count: u32, _target: &str) -> Option<PingStats> {
 	let output = cmd
 		.args([
 			"-c", &count.to_string(),
-			&iface_ip,
+			"-I", iface, target
 		])
 		.output()
 		.ok()?;
@@ -183,7 +147,7 @@ fn run_ping_test(iface: &str, count: u32, _target: &str) -> Option<PingStats> {
 /// Prints the report to standard output.
 fn print_comparison(iface: &str, count:u32, control: &PingStats, modified: &PingStats) -> String {
 	let output = format!(
-"=== Network Comparison ({count} pings) ===
+"\n\n=== Network Comparison ({count} pings) ===
 
 BEFORE CHAOS (baseline of {iface}):
   transmitted : {ct_tx}
@@ -250,39 +214,6 @@ fn write_results_file(iface: &str, contents: &str) {
 	println!("Results written to {}", path);
 }
 
-/// Checks whether the network chaos environment appears to be initialized.
-///
-/// This currently verifies that an interface named `control` exists (created by setup scripts).
-///
-/// # Returns
-/// Returns `true` if the environment looks initialized, otherwise `false`.
-///
-/// # Side Effects
-/// Executes `ip link show control`.
-fn verify_network_environment() -> bool {
-	let status = std::process::Command::new("ip")
-		.args(["link", "show", "control"])
-		.status();
-
-	match status {
-		Ok(s) if s.success() => true,
-		_ => false,
-	}
-}
-
-/// Prints instructions for initializing the network chaos environment.
-///
-/// # Side Effects
-/// Prints an error message and setup steps to standard output.
-fn print_setup_required_message() {
-	println!("ERROR: Chaos network environment is not initialized.\n");
-	println!("Please run the following commands from the project root:\n");
-	println!("  sudo ./scripts/chaos-net-cleanup.sh   (optional, recommended)");
-	println!("  sudo ./scripts/chaos-net-setup.sh\n");
-	println!("Then re-run:");
-	println!("  sudo -E cargo run -p chaosfilter-cli\n");
-}
-
 /// Runs the network stack interactive menu.
 ///
 /// The menu remains active until the user returns to the main menu.
@@ -302,11 +233,6 @@ fn print_setup_required_message() {
 /// # Panics
 /// Panics if stdin/stdout operations fail (uses `unwrap()`).
 pub fn run() {
-	if !verify_network_environment() {
-		print_setup_required_message();
-		return;
-	}
-
 	loop {
 		println!();
 		println!("Network Stack options:");
@@ -362,66 +288,62 @@ fn show_qdisc_state() {
 	}
 }
 
-/// Creates a new interface pair (via helper script).
+/// Applies or replaces a root qdisc on an existing network interface.
 ///
-/// Prompts for an interface base name and runs `scripts/chaos-net-add-iface.sh`.
+/// Prompts the user for an interface name (e.g., `enp5s0`, `wlo1`) and applies
+/// a baseline root qdisc using `tc qdisc replace`.
 ///
 /// # Side Effects
 /// - Reads from stdin and prints to stdout.
-/// - Executes `sudo bash <script> <name>`.
+/// - Executes `sudo tc qdisc replace dev <iface> root <qdisc>`.
+/// - Modifies the kernel networking stack for the selected interface.
 ///
 /// # Requires
-/// Root privileges (`sudo`) and the `scripts/` directory present relative to the project root.
+/// - Root privileges (`sudo`) or sufficient capabilities to manage qdiscs.
+/// - The `tc` and `ip` utilities available in `PATH`.
 ///
 /// # Panics
-/// Panics if stdout flush or stdin read fails (uses `unwrap()`).
+/// Panics if stdin read or stdout flush fails (uses `unwrap()`).
 fn create_root_qdisc() {
 	println!();
-	println!("Create root qdisc:");
+	println!("Create/replace root qdisc:");
 	
-	let name = prompt("Interface name");
+	let iface = prompt("Interface name (e.g., enp5s0, wlo1)");
 
-	if name.is_empty() {
+	if iface.is_empty() {
 		println!("ERROR: interface name cannot be empty");
 		return;
 	}
 
-	if name.ends_with("-peer") {
-		println!("ERROR: interface name must not end with '-peer'");
-		return;
-	}
+	let exists = Command::new("ip")
+		.args(["link", "show", "dev", &iface])
+		.status()
+		.map(|s| s.success())
+		.unwrap_or(false);
 
-	let script_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-		.parent().unwrap().parent().unwrap()
-		.join("scripts/chaos-net-add-iface.sh");
-
-	let script_path = match script_path.canonicalize() {
-		Ok(p) => p,
-		Err(e) => {
-			println!("ERROR: could not resolve script path: {}", e);
-			return;
-		}
-	};
-
-	println!("Creating interface pair '{} <-> {}-peer'...", name, name);
+	if !exists {
+        println!("ERROR: interface '{}' not found. Run `ip link` to list interfaces.", iface);
+        return;
+    }
 
 	let status = Command::new("sudo")
-		.args([
-			"bash", 
-			script_path.to_str().unwrap(),
-			&name,
-		])
-		.status();
+        .args([
+            "tc", "qdisc", "replace",
+            "dev", &iface,
+            "root",
+            "fq_codel",
+        ])
+        .status();
 
 	match status {
 		Ok(s) if s.success() => {
-			println!("Interface '{}' created successfully", name);
+			println!("Root qdisc applied successfully to '{}'", iface);
 		}
 		Ok(_) => {
-			println!("ERROR: interface creation failed");
+			println!("ERROR: failed to apply root qdisc on '{}'", iface);
 		}
 		Err(e) => {
-			println!("ERROR: failed to execute add-iface script: {}", e);
+			println!("ERROR: failed to execute tc: {}", e);
 		}
 	}
 }
@@ -452,7 +374,7 @@ fn apply_netem() {
 	let ping_count = 10;
 	let ping_target = "8.8.8.8";
 
-	let iface = prompt("Interface (e.g. eth0)");
+	let iface = prompt("Interface (e.g., enp5s0, wlo1)");
 
 	let delay = prompt("Delay (ms)");
 	let loss = prompt("Packet loss (%)");
@@ -543,69 +465,63 @@ fn apply_netem() {
 	write_results_file(&iface, &report);
 }
 
-/// Deletes an interface pair (via helper script).
+/// Deletes the root qdisc from an existing network interface.
 ///
-/// Prompts for an interface base name and runs `scripts/chaos-net-del-iface.sh`.
+/// Prompts the user for an interface name (e.g., `enp5s0`, `wlo1`) and deletes the
+/// root qdisc using `tc qdisc del dev <iface> root`.
 ///
 /// # Notes
-/// This is a destructive operation intended for cleanup/recovery.
+/// This is a destructive operation in the sense that it removes traffic control configuration
+/// from the interface, and may affect current network behavior.
 ///
 /// # Side Effects
 /// - Reads from stdin and prints to stdout.
-/// - Executes `sudo bash <script> <name>`.
+/// - Executes `sudo tc qdisc del dev <iface> root`.
 ///
 /// # Requires
-/// Root privileges (`sudo`) and the `scripts/` directory present relative to the project root.
+/// - Root privileges (`sudo`) or sufficient capabilities to manage qdiscs.
+/// - The `tc` and `ip` utilities available in `PATH`.
 ///
 /// # Panics
-/// Panics if stdout flush or stdin read fails (uses `unwrap()`).
+/// Panics if stdin read or stdout flush fails (uses `unwrap()`).
 fn delete_root_qdisc() {
 	println!();
 	println!("Delete interface:");
 
-	let name = prompt("Interface name");
+	let iface = prompt("Interface name (e.g., enp5s0, wlo1)");
 
-	if name.is_empty() {
+	if iface.is_empty() {
 		println!("ERROR: interface name cannot be empty");
 		return;
 	}
 
-	if name.ends_with("-peer") {
-		println!("ERROR: specify base interface name(not -peer)");
-		return;
-	}
+	let exists = Command::new("ip")
+		.args(["link", "show", "dev", &iface])
+		.status()
+		.map(|s| s.success())
+		.unwrap_or(false);
 
-	let script_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-		.parent().unwrap().parent().unwrap()
-		.join("scripts/chaos-net-del-iface.sh");
-
-	let script_path = match script_path.canonicalize() {
-		Ok(p) => p,
-		Err(e) => {
-			println!("ERROR: coulf not resolve delete script path: {}", e);
-			return;
-		}
-	};
-
-	println!("Deleting interface pair '{} <-> {}-peer'...", name, name);
+	if !exists {
+        println!("ERROR: interface '{}' not found. Run `ip link` to list interfaces.", iface);
+        return;
+    }
 
 	let status = Command::new("sudo")
 		.args([
-			"bash",
-			script_path.to_str().unwrap(),
-			&name,
+			"tc", "qdisc", "del", 
+			"dev", &iface, "root"
 		])
 		.status();
 
 	match status {
 		Ok(s) if s.success() => {
-			println!("Interface '{}' deleted successfully", name);
+			println!("Root qdisc deleted successfully from '{}'", iface);
 		}
 		Ok(_) => {
-			println!("ERROR: interface deletion failed");
+			println!("ERROR: failed to delete root qdisc from '{}'", iface);
 		}
 		Err(e) => {
-			println!("ERROR: failed to execute delete script: {}", e);
+			println!("ERROR: failed to execute tc: {}", e);
 		}
 	}
 }

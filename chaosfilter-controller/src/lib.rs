@@ -35,6 +35,8 @@ pub mod tc;
 /// - the referenced network interface does not exist, or
 /// - required system commands fail to execute.
 pub fn validate_plan(plan: &Plan) -> Result<()> {
+    println!("\nValidating chaos plan...\n");
+
     // Check cgroup exists
     if let Some(cg) = &plan.targets.cgroup {
         let cgroup_path = format!("/sys/fs/cgroup/{}", cg);
@@ -54,6 +56,8 @@ pub fn validate_plan(plan: &Plan) -> Result<()> {
             bail!("network interface not found: {}", iface);
         }
     }
+
+    println!("\nConfig OK\n");
 
     Ok(())
 }
@@ -160,9 +164,9 @@ pub fn revert_plan(mut qdisc: QdiscNetem, plan: &Plan) -> Result<()> {
 
     if plan.features.load_ebpf {
         let _bpf = load_ebpf_object()?;
-        println!("[control] loaded ebpf object");
+        println!("Loaded ebpf object.");
     } else {
-        println!("[control] skipping ebpf load (features.load_ebpf=false)");
+        println!("Skipping ebpf load (features.load_ebpf=false).");
     }
 
     Ok(())
@@ -195,6 +199,8 @@ pub fn revert_plan(mut qdisc: QdiscNetem, plan: &Plan) -> Result<()> {
 /// - sleeping is interrupted by process exit,
 /// - or reverting the plan fails.
 pub fn run_plan(plan: &Plan) -> Result<()> {
+    println!("\nRunning chaos plan...\n");
+
     let qdisc = apply_plan(plan)?;
 
     // If Ctrl+C is pressed, cleanup
@@ -207,12 +213,14 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     }
 
     println!(
-        "[control] holding chaos for {} ms",
+        "Holding chaos for {} ms.",
         plan.schedule.duration_ms
     );
     thread::sleep(Duration::from_millis(plan.schedule.duration_ms));
 
     revert_plan(qdisc, plan)?;
+
+    println!("\nRun complete.\n");
 
     Ok(())
 }
