@@ -120,6 +120,12 @@ cargo build -p chaosfilter_cli
 target/debug/chaosfilter_cli run -c chaosfilter.toml
 ```
 
+## Documentation
+To access documentation, run:
+```rs
+cargo doc --open
+```
+
 ## Cross-compiling on macOS
 
 Cross compilation should work on both Intel and Apple Silicon Macs.

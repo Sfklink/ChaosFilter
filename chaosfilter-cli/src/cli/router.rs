@@ -7,7 +7,7 @@ use crate::modules;
 /// Routes the user to the specified module.
 /// 
 /// # Arguments
-/// * `choice` - Numeric menu option inputted by the user.
+/// * `choice` - Numeric menu option given by the user.
 /// 
 /// # Returns
 /// Returns `true` if execution can continue, or `false` if the application should terminate.

@@ -1,9 +1,9 @@
-//Aggregates all testing system domains that the CLI supports
-
-//Each module represents a high-level category of system behavior
-//that ChaosFilter can mess with
-
-//Add new domains here then added to the dispatcher when ready
+//! CLI modules.
+//!
+//! Each module provides an executor for it's respective subsystem:
+//! - [`crate::modules::network::run()`]
+//! - [`crate::modules::disk::run()`]
+//! - [`crate::modules::cpu::run()`]
 
 pub mod network;
 pub mod disk;

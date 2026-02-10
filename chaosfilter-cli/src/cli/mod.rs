@@ -1,6 +1,6 @@
-//! CLI Runner Function
+//! CLI Runner
 //! 
-//! Ruuns the menu loop, reading selections from [`menu::show_main_menu`]
+//! Runs the menu loop, reading selections from [`menu::show_main_menu`]
 //! and routing them via [`router::route`].
 
 pub mod menu;

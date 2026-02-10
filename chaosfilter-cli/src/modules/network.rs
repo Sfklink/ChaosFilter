@@ -1,26 +1,15 @@
-//Entry point for network stack testing
-
-//network defines the interactive CLI interface for all
-//network stack related chaos
-
-//It contains
-//	-User prompts and menus
-//	-Input parsing and validation
-//	-Calls into the control crate made by Spencer
-
-//IMPORTANT NOTE:
-//This section is only calling all the tc/qdisc logic
-//and does not handle/implement it itself
-//That is all done by the code Spencer wrote
-
-//This seperation makes the CLI safer, more predictable,and easier to evolve when needed
-
-//HEY PAY ATTENTION TO THIS
-//I started with 2 qdisc control and the one to modify I changed to a before
-//and while the chaos is active. The names of anything that could be called
-//at a later point were not changed cause I am lazy. Just know if it mentions
-//'control' that is now 'before' and 'modified' became 'during'. The output did
-//change to reflect this update
+//! Network stack module
+//!
+//! This module provides an interactive menu for ChaosFilter.
+//! It is responsible for:
+//! - Prompting the user
+//! - Parsing user inputs
+//! - Running baseline vs during-chaos ping comparisons
+//! - Calling [`chaosfilter_controller`] to apply/revert chaos (tc/qdisc/etc.)
+//!
+//! **Important:** This module does not implement tc/qdisc logic in and of itself.
+//! It delegates all execution to the controller layer (e.g. [`chaosfilter_controller::apply_plan`])
+//! to keep the UI layer safer and more human-readable.
 
 use std::io::{self, Write};
 use std::process::Command;
@@ -28,8 +17,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::fs;
 use std::path::PathBuf;
 
-//This struct is how we do the ping comare between the control and the modified qdisc
-//Important for none coder understanding
+/// Summary statistics parsed from `ping` output.
+///
+/// # Notes:
+/// RTT values are in milliseconds. Packet loss is a percentage in the range `0.0..=100.0`.
 #[derive(Debug)]
 struct PingStats {
 	transmitted: u32,
@@ -40,9 +31,17 @@ struct PingStats {
 	rtt_max: f32,
 }
 
-//This finds the IP of the interface the user selected
-//allowing for the use of more than just using a qdics made by our
-//shell script
+/// Finds the IPv4 address assigned to the specified `iface`.
+///
+/// # Arguments
+/// * `iface` - Interface name (e.g. `enp5s0`, `wlo1`, `vethA`, `vethB`, etc.).
+///
+/// # Returns
+/// Returns `Some(ip)` (e.g. `"192.168.1.10"`) if an IPv4 address is found,
+/// otherwise returns `None`.
+///
+/// # Side Effects
+/// Executes `ip -4 addr show dev <iface>`.
 fn get_iface_ip(iface: &str) -> Option<String> {
 	let output = Command::new("ip")
 		.args(["-4", "addr", "show", "dev", iface])
@@ -66,8 +65,17 @@ fn get_iface_ip(iface: &str) -> Option<String> {
 	None
 }
 
-//This function checks to see if the user selected interface is in the host namespace
-//and if not where is it
+/// Detects whether `iface` lives in a non-default network namespace.
+///
+/// # Arguments
+/// * `iface` - Interface name to check.
+///
+/// # Returns
+/// Returns `Some(ns_name)` if the interface output contains `link-netns <name>`.
+/// Returns `None` if the interface appears to be in the host namespace or cannot be queried.
+///
+/// # Side Effects
+/// Executes `ip link show <iface>`.
 fn get_iface_netns(iface: &str) -> Option<String> {
 	let output = Command::new("ip")
 		.args(["link", "show", iface])
@@ -87,8 +95,23 @@ fn get_iface_netns(iface: &str) -> Option<String> {
 	None
 }
 
-//This function is what does the 'ping'ing
-//Important without this no test results and thats bad
+/// Runs a ping test and parses packet loss + RTT stats.
+///
+/// If `iface` is in another network namespace, this uses `ip netns exec <ns> ping`.
+///
+/// # Arguments
+/// * `iface` - Interface name to test.
+/// * `count` - Number of ping packets to send.
+/// * `_target` - Intended target host/IP (currently unused; the function pings the interface IP).
+///
+/// # Returns
+/// Returns `Some(PingStats)` if ping output can be collected and parsed.
+/// Returns `None` if `ping` fails or output cannot be collected or parsed.
+///
+/// # Side Effects
+/// Executes either:
+/// - `ping -c <count> <iface_ip>` (host namespace), or
+/// - `ip netns exec <ns> ping -c <count> <iface_ip>`.
 fn run_ping_test(iface: &str, count: u32, _target: &str) -> Option<PingStats> {
 	let iface_ip = get_iface_ip(iface)?;
 	let netns = get_iface_netns(iface);
@@ -145,7 +168,19 @@ fn run_ping_test(iface: &str, count: u32, _target: &str) -> Option<PingStats> {
 	})
 }
 
-//This makes the results look real pretty
+/// Formats and prints a baseline vs during-chaos comparison report.
+///
+/// # Arguments
+/// * `iface` - Interface name under test.
+/// * `count` - Number of pings used to compute stats.
+/// * `control` - Baseline stats collected before chaos.
+/// * `modified` - Stats collected during chaos.
+///
+/// # Returns
+/// Returns the formatted report string and prints the formatted String.
+///
+/// # Side Effects
+/// Prints the report to standard output.
 fn print_comparison(iface: &str, count:u32, control: &PingStats, modified: &PingStats) -> String {
 	let output = format!(
 "=== Network Comparison ({count} pings) ===
@@ -180,8 +215,18 @@ DURING CHAOS ({iface}):
 	output
 }
 
-//This function writes the reuslts to a text file
-//It provides a more permanent solution for the results than the terminal
+/// Writes a results report to `results/netem_<iface>_<timestamp>.txt`.
+///
+/// This is best-effort: failures are logged as warnings instead of returning errors.
+///
+/// # Arguments
+/// * `iface` - Interface name used for the output filename.
+/// * `contents` - Report contents to write.
+///
+/// # Side Effects
+/// - Creates the `results/` directory if needed.
+/// - Writes a timestamped file to disk.
+/// - Attempts to set file permissions to `0644`.
 fn write_results_file(iface: &str, contents: &str) {
 	let ts = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
 	let path = format!("results/netem_{}_{}.txt", iface, ts);
@@ -205,8 +250,15 @@ fn write_results_file(iface: &str, contents: &str) {
 	println!("Results written to {}", path);
 }
 
-//This function verifies that the shell scripts have been run
-//Very impprtant since the code can not function without them being ran
+/// Checks whether the network chaos environment appears to be initialized.
+///
+/// This currently verifies that an interface named `control` exists (created by setup scripts).
+///
+/// # Returns
+/// Returns `true` if the environment looks initialized, otherwise `false`.
+///
+/// # Side Effects
+/// Executes `ip link show control`.
 fn verify_network_environment() -> bool {
 	let status = std::process::Command::new("ip")
 		.args(["link", "show", "control"])
@@ -218,8 +270,10 @@ fn verify_network_environment() -> bool {
 	}
 }
 
-//This function yells at the user if the setup has not been ran
-//Also important because the user need to know there place
+/// Prints instructions for initializing the network chaos environment.
+///
+/// # Side Effects
+/// Prints an error message and setup steps to standard output.
 fn print_setup_required_message() {
 	println!("ERROR: Chaos network environment is not initialized.\n");
 	println!("Please run the following commands from the project root:\n");
@@ -229,12 +283,24 @@ fn print_setup_required_message() {
 	println!("  sudo -E cargo run -p chaosfilter-cli\n");
 }
 
-//Entry point called by the CLI dispatcher
-
-//This function displays the network stack options menu which will
-//reamin active until the user ends the program
-
-//returning to the main menu marks leaving network stack testing
+/// Runs the network stack interactive menu.
+///
+/// The menu remains active until the user returns to the main menu.
+///
+/// # Returns
+/// Returns `()` when the user exits the network module or when the environment is not initialized.
+///
+/// # Side Effects
+/// - Reads from stdin and prints to stdout.
+/// - Runs system commands (`ip`, `tc`, `ping`) via helper functions.
+/// - May apply/revert chaos through [`chaosfilter_controller::apply_plan`] and
+///   [`chaosfilter_controller::revert_plan`].
+///
+/// # Requires
+/// The chaos network environment must be initialized (via setup scripts).
+///
+/// # Panics
+/// Panics if stdin/stdout operations fail (uses `unwrap()`).
 pub fn run() {
 	if !verify_network_environment() {
 		print_setup_required_message();
@@ -267,11 +333,10 @@ pub fn run() {
 	}
 }
 
-//Displays the current qdisc state for the host namespace
-//I called it something else because I wanted to 
-
-//This runs 'tc qdisc show' and prints the results
-//It is a read only operation made to help the user see what can be modified
+/// Displays the current qdisc state for the host namespace.
+///
+/// # Side Effects
+/// Executes `tc qdisc show` and prints stdout/stderr.
 fn show_qdisc_state() {
 	println!();
 	println!("----------------------");
@@ -297,9 +362,19 @@ fn show_qdisc_state() {
 	}
 }
 
-//This function allows the user to create a new paied veth interface
-//called what ever that would like. It runs a shell script
-//For more detail look at comments in /CLI-scripts/scripts/chaos-net-add-iface.sh 
+/// Creates a new interface pair (via helper script).
+///
+/// Prompts for an interface base name and runs `scripts/chaos-net-add-iface.sh`.
+///
+/// # Side Effects
+/// - Reads from stdin and prints to stdout.
+/// - Executes `sudo bash <script> <name>`.
+///
+/// # Requires
+/// Root privileges (`sudo`) and the `scripts/` directory present relative to the project root.
+///
+/// # Panics
+/// Panics if stdout flush or stdin read fails (uses `unwrap()`).
 fn create_root_qdisc() {
 	println!();
 	println!("Create root qdisc:");
@@ -351,15 +426,28 @@ fn create_root_qdisc() {
 	}
 }
 
-//Applies temporary netem confiurations to an interface
-
-//Behavior:
-//	Applies netem to the qdisc
-//	Runs the tests
-//	Automatically removes netem from qdisc afterwards
-
-//There is no persistant state
-//You can safely call repeatedly and is scoped to a single test run
+/// Applies netem parameters to an interface for a single interactive test run.
+///
+/// Behavior:
+/// - Prompts for interface + delay + loss
+/// - Loads `chaosfilter.toml` as a base plan
+/// - Runs a baseline ping test (before chaos)
+/// - Applies chaos via [`chaosfilter_controller::apply_plan`]
+/// - Runs a ping test during chaos
+/// - Reverts changes via [`chaosfilter_controller::revert_plan`]
+/// - Writes a comparison report to disk
+///
+/// # Side Effects
+/// - Reads from stdin and prints to stdout.
+/// - Reads `chaosfilter.toml` from disk.
+/// - Executes `ip`, `ping`, and controller operations (which may call `tc`).
+/// - Writes results to `results/`.
+///
+/// # Requires
+/// Applying chaos typically requires CAP_NET_ADMIN (often `sudo`) depending on how the controller runs.
+///
+/// # Panics
+/// Panics if stdin/stdout operations fail (uses `unwrap()`).
 fn apply_netem() {
 	let ping_count = 10;
 	let ping_target = "8.8.8.8";
@@ -455,15 +543,22 @@ fn apply_netem() {
 	write_results_file(&iface, &report);
 }
 
-//Deltes the root qdisc on a given interface
-
-//This is destructive
-//It removes the root qdisc entirely
-//The kernel will fall back to its default qdisc behavior
-
-//This is NOT a state reset
-//It will not restore a previously existing qdisc configuration
-//It is intended as a cleanup/recovery mechanism and a way to force a known baseline
+/// Deletes an interface pair (via helper script).
+///
+/// Prompts for an interface base name and runs `scripts/chaos-net-del-iface.sh`.
+///
+/// # Notes
+/// This is a destructive operation intended for cleanup/recovery.
+///
+/// # Side Effects
+/// - Reads from stdin and prints to stdout.
+/// - Executes `sudo bash <script> <name>`.
+///
+/// # Requires
+/// Root privileges (`sudo`) and the `scripts/` directory present relative to the project root.
+///
+/// # Panics
+/// Panics if stdout flush or stdin read fails (uses `unwrap()`).
 fn delete_root_qdisc() {
 	println!();
 	println!("Delete interface:");
@@ -515,10 +610,19 @@ fn delete_root_qdisc() {
 	}
 }
 
-//Prompts the user for input and returns a trimmed response
-
-//This helper is used for all interaction within the network stack
-//module to keep I/O behavior consistant and clean
+/// Prompts the user for input and returns a trimmed response.
+///
+/// # Arguments
+/// * `label` - Prompt label shown to the user.
+///
+/// # Returns
+/// The trimmed user input.
+///
+/// # Side Effects
+/// Prints to stdout and reads a line from stdin.
+///
+/// # Panics
+/// Panics if stdout flush or stdin read fails (uses `unwrap()`).
 fn prompt(label: &str) -> String {
 	print!("{}: ", label);
 	io::stdout().flush().unwrap();

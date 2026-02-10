@@ -1,3 +1,9 @@
+//! Controller orchestration.
+//!
+//! High-level operations for validating and running a [`Plan`].
+//! This layer coordinates injectors (tc/qdisc, eBPF load, etc.) and ensures
+//! best-effort cleanup.
+
 use qdiscs::QdiscNetem;
 use chaosfilter_common::Plan;
 
@@ -9,6 +15,25 @@ pub mod qdiscs;
 pub mod injector;
 pub mod tc;
 
+/// Validates a plan against the current host environment.
+///
+/// Performs lightweight pre-flight checks to catch obvious configuration errors
+/// before any chaos is applied.
+///
+/// # Arguments
+/// * `plan` - Chaos plan to validate.
+///
+/// # Returns
+/// Returns `Ok(())` if the environment appears compatible with the plan.
+///
+/// # Side Effects
+/// Executes read-only system checks (e.g. `ip link show`) and filesystem existence checks.
+///
+/// # Errors
+/// Returns an error if:
+/// - the referenced cgroup path does not exist, or
+/// - the referenced network interface does not exist, or
+/// - required system commands fail to execute.
 pub fn validate_plan(plan: &Plan) -> Result<()> {
     // Check cgroup exists
     if let Some(cg) = &plan.targets.cgroup {
@@ -33,7 +58,23 @@ pub fn validate_plan(plan: &Plan) -> Result<()> {
     Ok(())
 }
 
-
+/// Loads the eBPF object used by ChaosFilter.
+///
+/// Resolution order:
+/// 1) `CHAOSFILTER_EBPF_OBJ` environment variable (explicit path)
+/// 2) `$OUT_DIR/chaosfilter-ebpf.o` (build output)
+///
+/// # Returns
+/// Returns an [`aya::Ebpf`] object loaded from the chosen object file.
+///
+/// # Side Effects
+/// Reads an object file from disk and consults environment variables.
+///
+/// # Errors
+/// Returns an error if:
+/// - the object file cannot be read,
+/// - `OUT_DIR` is missing when needed,
+/// - or the object cannot be parsed/loaded by Aya.
 pub fn load_ebpf_object() -> Result<Ebpf> {
     // 1) Prefer explicit path if provided
     if let Ok(p) = env::var("CHAOSFILTER_EBPF_OBJ") {
@@ -55,11 +96,31 @@ pub fn load_ebpf_object() -> Result<Ebpf> {
     Ebpf::load(&bytes).context("failed to load eBPF object")
 }
 
-//For the CLI to work I needed to redo this section. Nothing is being changed
-//The CLI just needs to seperate the running of the tests and the reset so 
-//it can get the data from the tests
-
-//This function starts the plan
+/// Applies the plan and returns an injector handle used for revert.
+///
+/// This function is intended for interactive workflows where you need to:
+/// 1) apply chaos,
+/// 2) run external measurements while chaos is active,
+/// 3) revert chaos afterward (using the returned handle).
+///
+/// # Arguments
+/// * `plan` - Chaos plan to apply.
+///
+/// # Returns
+/// Returns an injector handle (currently [`QdiscNetem`]) that can be passed to
+/// [`revert_plan`] to undo the applied changes.
+///
+/// # Side Effects
+/// Modifies system state by applying configured injectors (e.g. tc/qdisc netem).
+///
+/// # Requires
+/// Applying network chaos typically requires CAP_NET_ADMIN (often `sudo`), depending on the injector.
+///
+/// # Errors
+/// Returns an error if:
+/// - [`validate_plan`] fails,
+/// - injector validation fails,
+/// - or applying chaos fails.
 pub fn apply_plan(plan: &Plan) -> Result<QdiscNetem> {
     validate_plan(plan)?;
 
@@ -71,7 +132,29 @@ pub fn apply_plan(plan: &Plan) -> Result<QdiscNetem> {
     Ok(qdisc)
 }
 
-//This function reverts the plan
+/// Reverts applied chaos and performs optional feature actions.
+///
+/// Currently:
+/// - reverts the qdisc injector (best effort cleanup),
+/// - optionally loads the eBPF object when `plan.features.load_ebpf` is `true`.
+///
+/// # Arguments
+/// * `qdisc` - Injector handle returned by [`apply_plan`].
+/// * `plan` - Original plan used to configure optional feature behavior.
+///
+/// # Returns
+/// Returns `Ok(())` if cleanup and optional steps complete successfully.
+///
+/// # Side Effects
+/// - Modifies system state by reverting chaos.
+/// - May load an eBPF object from disk.
+/// - Prints status messages to stdout.
+///
+/// # Requires
+/// Reverting network chaos typically requires CAP_NET_ADMIN (often `sudo`), depending on the injector.
+///
+/// # Errors
+/// Returns an error if revert fails or if eBPF loading is enabled and fails.
 pub fn revert_plan(mut qdisc: QdiscNetem, plan: &Plan) -> Result<()> {
     qdisc.revert()?; //best effort clean up
 
@@ -85,9 +168,32 @@ pub fn revert_plan(mut qdisc: QdiscNetem, plan: &Plan) -> Result<()> {
     Ok(())
 }
 
-//Rewritting this to use the new fucntions
-//Base line the CLI needed to seperate the running of the test and
-//the reverting of the params to get the data
+
+/// Runs the plan end-to-end (apply → hold → revert).
+///
+/// This is the one-shot “just run it” entrypoint used by the CLI.
+///
+/// # Arguments
+/// * `plan` - Chaos plan to run.
+///
+/// # Returns
+/// Returns `Ok(())` after chaos has been applied, held for the configured duration,
+/// and reverted successfully.
+///
+/// # Side Effects
+/// - Applies and reverts system-level chaos (e.g. tc/qdisc).
+/// - Sleeps the current thread for `plan.schedule.duration_ms`.
+/// - Installs a Ctrl+C handler that attempts cleanup and exits the process.
+///
+/// # Requires
+/// Running network chaos typically requires CAP_NET_ADMIN (often `sudo`), depending on the injector.
+///
+/// # Errors
+/// Returns an error if:
+/// - applying the plan fails,
+/// - the Ctrl+C handler cannot be installed,
+/// - sleeping is interrupted by process exit,
+/// - or reverting the plan fails.
 pub fn run_plan(plan: &Plan) -> Result<()> {
     let qdisc = apply_plan(plan)?;
 
