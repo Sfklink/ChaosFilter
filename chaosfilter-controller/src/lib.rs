@@ -12,7 +12,6 @@ use std::{env, fs, thread, time::Duration, path::{Path, PathBuf}, process::Comma
 use aya::Ebpf;
 
 pub mod qdiscs;
-pub mod injector;
 pub mod tc;
 
 /// Validates a plan against the current host environment.
