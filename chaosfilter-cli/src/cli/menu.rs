@@ -1,20 +1,37 @@
-//Handles all the user menu prompts and input parsing
-
-//menu will display the menu options, read the user input,
-//and return a normalized selection
-
-//There is no logic handling, validation beyond parsing, or module dispatching
+//! Main Menu Function
+//! 
+//! Shows the main menu, parses the input from stdin, 
+//! and returns the parsed selection.
 
 use std::io::{self, Write};
 
-//Shows the main menu and returns the users selection
-
-//Return options:
-// - A # relating to the users selection
-// - A 0 if parsing failed
-
-//The simple design is resilient to invalid user input
-
+/// Displays the main ChaosFilter menu and parses the user's selection.
+///
+/// This function prints the available subsystems that can be tested
+/// and blocks until input is received from standard input.
+///
+/// # Returns
+/// Returns a numeric selection corresponding to the chosen subsystem:
+/// - `1` → Network Stack
+/// - `2` → Disk I/O
+/// - `3` → CPU / Scheduling
+/// - `4` → Exit
+///
+/// Returns `0` if the input is invalid or cannot be parsed into a `u32`.
+///
+/// # Side Effects
+/// - Writes menu text to standard output.
+/// - Flushes [`std::io::Stdout`] to ensure the prompt appears immediately.
+/// - Blocks while waiting for input from [`std::io::stdin`].
+///
+/// # Errors
+/// This function does not return a [`Result`].  
+/// Invalid numeric input is handled gracefully by returning `0`.
+///
+/// # Panics
+/// Panics if:
+/// - Flushing stdout fails, or
+/// - Reading from standard input fails.
 pub fn show_main_menu() -> u32 {
 	println!();
 	println!("What system would you like to test?");
@@ -23,7 +40,7 @@ pub fn show_main_menu() -> u32 {
 	println!("3) CPU / Scheduling");
 	println!("4) Exit");
 
-	println!(">");
+	print!(">");
 	io::stdout().flush().unwrap();
 
 	let mut input = String::new();

@@ -1,26 +1,44 @@
-//cli/mod defines the top-level control flow for the CLI
-
-//Responsible for
-//	-Own the main CLI loop
-//	-Display the menus
-//	-Dispatch the user sections to the correct module
-
-//It knows *what* modules exist
-//but not *how* the modules work
+//! CLI Runner
+//! 
+//! Runs the menu loop, reading selections from [`menu::show_main_menu`]
+//! and routing them via [`router::route`].
 
 pub mod menu;
-pub mod dispatcher;
+pub mod router;
 
-//Starts the CLI and keeps it going until the user exits
-
-//It will display the main menu, read the user input, then dispatch control to the
-//selected module and loop this process until the user selects a module or exits
+/// Runs the interactive ChaosFilter CLI loop.
+///
+/// This function continuously:
+/// 1. Displays the main menu using [`menu::show_main_menu`].
+/// 2. Routes the selected option via [`router::route`].
+/// 3. Repeats until routing indicates termination.
+///
+/// The loop exits when [`router::route`] returns `false`.
+///
+/// # Returns
+/// This function does not return a value.  
+/// Execution continues until the user selects the exit option.
+///
+/// # Side Effects
+/// - Writes menu output to standard output.
+/// - Delegates execution to subsystem handlers through [`router::route`].
+/// - Prints a termination message when exiting.
+///
+/// # Errors
+/// This function does not return a [`Result`].  
+/// Any errors occurring within menu display or routing are handled
+/// by the respective called functions.
+///
+/// # Panics
+/// This function itself does not explicitly panic.  
+/// However, it may propagate panics from:
+/// - [`menu::show_main_menu`]
+/// - [`router::route`]
 pub fn run() {
 	loop {
 		let choice = menu::show_main_menu();
 
-		//Dispatch returns false when the user exits
-		if !dispatcher::dispatch(choice) {
+		if !router::route(choice) {
 			break;
 		}
 	}

@@ -1,64 +1,100 @@
+//! ChaosFilter CLI (argument parsing + routing)
+//!
+//! This crate is responsible for:
+//! - Parsing CLI arguments via [`clap`]
+//! - Building a [`chaosfilter_common::Plan`] from a config file or inline flags
+//! - Dispatching to controller operations
+//!     - [`chaosfilter_common::validate_plan`]
+//!     - [`chaosfilter_controller::qdiscs::run_plan`]
+//!     - [`cli::run`]
+
+use anyhow::Result;
+use chaosfilter_common::RunLikeArgs;
+use clap::{Parser, Subcommand};
+
 pub mod cli;
 pub mod modules;
-use anyhow::{anyhow, Result};
-use clap::{ArgGroup, Parser, Subcommand};
-use chaosfilter_common::{Features, Injectors, Plan, QdiscNetem, Schedule, Targets};
 
+/// Top-level CLI argument structure.
+///
+/// This struct represents the root of the CLI command tree.
+/// It is parsed using [`clap::Parser`] and contains the selected
+/// subcommand.
+///
+/// # Behavior
+/// Delegates execution to one of the variants in [`Commands`].
 #[derive(Parser, Debug)]
-#[command(name = "chaosfilter-cli", version, about = "ChaosFilter control CLI")]
+#[command(
+    name = "chaosfilter-cli", 
+    version, 
+    about = "ChaosFilter CLI & UI"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 }
 
+/// Available CLI subcommands.
+///
+/// Each variant corresponds to a distinct execution path
+/// within ChaosFilter.
+///
+/// # Variants
+/// - [`Commands::Validate`] → Validates a chaos plan.
+/// - [`Commands::Chaos`] → Executes a chaos plan (apply → hold → revert).
+/// - [`Commands::Menu`] → Launches the interactive CLI UI.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Validate a chaos plan (from config or inline flags)
     Validate(RunLikeArgs),
 
     /// Run the chaos plan (apply -> hold -> revert)
-    Run(RunLikeArgs),
+    Chaos(RunLikeArgs),
+
+    /// Launch the interactive menu UI.
+    Menu,
 }
 
-#[derive(Parser, Debug, Clone)]
-#[command(
-    group(
-        ArgGroup::new("input")
-            .required(true)
-            .args(&["config", "iface"])
-    )
-)]
-pub struct RunLikeArgs {
-    /// Path to TOML config (mode A)
-    #[arg(short, long)]
-    pub config: Option<String>,
-
-    // --- Inline mode (mode B) ---
-    /// Network interface (required for inline mode)
-    #[arg(long)]
-    pub iface: Option<String>,
-
-    /// Duration in ms (inline mode)
-    #[arg(long, default_value_t = 5000)]
-    pub duration_ms: u64,
-
-    /// Optional cgroup relative to /sys/fs/cgroup (inline mode)
-    #[arg(long)]
-    pub cgroup: Option<String>,
-
-    /// Netem delay in ms (inline mode)
-    #[arg(long, default_value_t = 50)]
-    pub netem_delay_ms: u32,
-
-    /// Netem loss percent (inline mode)
-    #[arg(long, default_value_t = 0.0)]
-    pub netem_loss_percent: f32,
-
-    /// Enable eBPF load (inline mode)
-    #[arg(long, default_value_t = false)]
-    pub load_ebpf: bool,
-}
-
+/// CLI entrypoint used by `main`.
+///
+/// Parses CLI arguments into [`Cli`] and dispatches to the selected
+/// subcommand.
+///
+/// # Arguments
+/// * `args` - Iterator of command-line arguments (typically from
+///   [`std::env::args_os`]).
+///
+/// # Returns
+/// Returns `Ok(())` if the selected command completes successfully.
+///
+/// # Behavior
+/// - For [`Commands::Validate`]:
+///     - Builds a plan via [`RunLikeArgs::plan_from_args`].
+///     - Validates the plan using [`chaosfilter_common::validate_plan`].
+///
+/// - For [`Commands::Chaos`]:
+///     - Builds a plan via [`RunLikeArgs::plan_from_args`].
+///     - Executes the plan via [`chaosfilter_controller::qdiscs::run_plan`].
+///
+/// - For [`Commands::Menu`]:
+///     - Launches the interactive CLI loop via [`cli::run`].
+///
+/// # Side Effects
+/// - Prints status messages to standard output.
+/// - May modify system state via controller operations (e.g., `tc`, qdisc).
+/// - May launch an interactive stdin/stdout loop.
+///
+/// # Errors
+/// Returns an error if:
+/// - Argument parsing fails.
+/// - Plan construction fails (invalid config or missing inline flags).
+/// - Validation fails.
+/// - Chaos execution fails.
+/// - Any downstream controller operation fails.
+///
+/// # Panics
+/// This function does not explicitly panic.  
+/// Panics may propagate from lower-level modules if not handled.
 pub fn entry<I, T>(args: I) -> Result<()>
 where
     I: IntoIterator<Item = T>,
@@ -68,48 +104,15 @@ where
 
     match cli.command {
         Commands::Validate(args) => {
-            let plan = plan_from_args(args)?;
-            chaosfilter_controller::validate_plan(&plan)?;
-            println!("Config OK: {:?}", plan);
+            let plan = args.plan_from_args()?;
+            chaosfilter_common::validate_plan(&plan)?;
         }
-        Commands::Run(args) => {
-            let plan = plan_from_args(args)?;
-            chaosfilter_controller::run_plan(&plan)?;
-            println!("Run complete.");
+        Commands::Chaos(args) => {
+            let plan = args.plan_from_args()?;
+            chaosfilter_controller::qdiscs::run_plan(&plan)?;
         }
+        Commands::Menu => cli::run(),
     }
 
     Ok(())
-}
-
-fn plan_from_args(args: RunLikeArgs) -> Result<Plan> {
-    // Mode A: config file
-    if let Some(path) = args.config {
-        return Plan::load_from_toml_file(path);
-    }
-
-    // Mode B: inline flags
-    let iface = args
-        .iface
-        .ok_or_else(|| anyhow!("--iface is required when --config is not provided"))?;
-
-    Ok(Plan {
-        name: "inline".to_string(),
-        targets: Targets {
-            cgroup: args.cgroup,
-            iface: Some(iface),
-        },
-        schedule: Schedule {
-            duration_ms: args.duration_ms,
-        },
-        features: Features {
-            load_ebpf: args.load_ebpf,
-        },
-        injectors: Injectors {
-            qdisc_netem: QdiscNetem {
-                delay_ms: args.netem_delay_ms,
-                loss_percent: args.netem_loss_percent,
-            },
-        },
-    })
 }

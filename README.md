@@ -13,20 +13,24 @@ rustup toolchain install stable
 Note that editing the qdisc requires running commands at root.
 
 ## Usage
-Mode 1: Config File.
+To view usage:
+```bash
+cargo run -- --help
+```
+
+#### Note:
+The `--` is not required when running commands, but it does enable autocomplete w/ tab.
+
+### Mode 1: Config File.
+
 Run from a pre-existing *.toml file.
 
 Example (Validate config):
 ```bash
-cargo run -- run -c chaosfilter.toml
-```
-Example (Run Config):
-```bash
-cargo run -p chaosfilter_cli -- run -c chaosfilter.toml
-cargo run -p chaosfilter_cli -- validate -c chaosfilter.toml
+cargo run -- validate -c chaosfilter.toml
 ```
 
-chaosfilter.toml:
+`chaosfilter.toml`:
 ```toml
 name = "netem-test"
 
@@ -35,7 +39,7 @@ cgroup = "system.slice"
 iface = "enp34s0"
 
 [schedule]
-duration_ms = 20000
+duration_s = 20
 
 [features]
 load_ebpf = false
@@ -46,11 +50,16 @@ delay_ms = 100
 loss_percent = 50
 ```
 
-Mode 2: Inline flags. 
+Example (Run Config):
+```bash
+cargo run -- chaos -c chaosfilter.toml
+```
+
+### Mode 2: Inline flags. 
 
 Usage: 
 ```bash
-chaosfilter run <COMMAND>
+chaosfilter chaos <COMMAND>
 
 --iface <iface>
 Network interface to apply chaos to (required for inline mode)
@@ -77,16 +86,31 @@ Enable eBPF loading (feature-gated, optional)
 
 Example:
 ```bash
-cargo build -p chaosfilter_cli
+cargo build
 sudo target/debug/chaosfilter_cli run --iface enp34s0 --duration-ms 5000 --netem-delay-ms 50 --netem-loss-percent 0.2
 ```
 
+### Mode 3: Menu GUI
+
+```bash
+cargo run -- menu
+```
+
+Output:
+```bash
+What system would you like to test?
+1) Network Stack
+2) Disk I/O
+3) CPU / Scheduling
+4) Exit
+>
+```
 
 ---
 
 ## Build & Run
-Use `cargo build`, `cargo check`, `cargo run`, etc. as normal. Build and run your program with:
 
+If you are using mode 1, use `cargo build`, `cargo check`, `cargo run`, etc. as normal. Build and run your program with:
 ```shell
 cargo build
 cargo run -- <args>
@@ -95,7 +119,7 @@ cargo run -- <args>
 Example:
 ```shell
 cargo build
-cargo run -- net --cgroup system.slice/sshd.service --iface enp5s0 --latency 300ms --loss 10% --duration 20s
+cargo run -- chaos --cgroup system.slice/sshd.service --iface enp5s0 --latency 300ms --loss 10% --duration 20s
 ```
 
 If a cgroup is not readily available, you can create one yourself named `chaos-test`:
@@ -111,13 +135,20 @@ ping -c 3 8.8.8.8
 
 and use it in chaos filter run by doing:
 ```shell
-chaosfilter --cgroup chaos-test <args>
+chaosfilter run --cgroup chaos-test <args>
 ```
 
 Program can also be pointed a .toml file to act as config, eg.:
 ```bash
-cargo build -p chaosfilter_cli
+cargo build
 target/debug/chaosfilter_cli run -c chaosfilter.toml
+```
+
+## Documentation
+
+To access documentation, run:
+```bash
+cargo doc --open
 ```
 
 ## Cross-compiling on macOS
