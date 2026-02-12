@@ -4,8 +4,12 @@ version = "0.1.0"
 license.workspace = true
 edition.workspace = true
 
+[features]
+cli = ["dep:clap"]
+
 [dependencies]
 anyhow = { workspace = true }
 aya = { workspace = true }
 ctrlc = { workspace = true }
+clap = { workspace = true, optional = true}
 chaosfilter-common = { path = "../chaosfilter-common" }

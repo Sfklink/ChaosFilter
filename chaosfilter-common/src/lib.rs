@@ -3,9 +3,10 @@
 //! Defines [`Plan`] and related types used across the CLI and controller.
 //! Plans are typically loaded from TOML via [`Plan::load_from_toml_file`].
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
+use clap::{ArgGroup, Parser};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path};
+use std::{fs, io::{self, Write}, path::Path, process::Command};
 
 /// Top-level chaos plan configuration.
 ///
@@ -81,7 +82,66 @@ pub struct Targets {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Schedule {
     /// Duration to hold chaos in milliseconds.
-    pub duration_ms: u64,
+    pub duration_s: u64,
+}
+
+/// Arguments shared by [`chaosfilter_controller::validate_plan`] and [`chaosfilter_controller::run_plan`]
+/// 
+/// This supports two different modes:
+///     - **Config Mode:** Provide a config through `--config <path>`
+///     - **Inline Mode:** Provide various arguments such as `--iface <name> --duration-ms <time in ms>`
+/// 
+/// The clap `ArgGroup` enforces that at least one mode (`--config` or `--iface`) is provided
+#[derive(Parser, Debug, Clone)]
+#[command(
+    group(
+        ArgGroup::new("input")
+            .required(true)
+            .args(&["config", "iface"])
+    )
+)]
+pub struct RunLikeArgs {
+    /// Path to TOML config (required for config mode)
+    #[arg(short, long)]
+    pub config: Option<String>,
+
+    /// Network interface (required for inline mode)
+    #[arg(long)]
+    pub iface: Option<String>,
+
+    /// Duration in ms (inline mode)
+    #[arg(long, default_value_t = 5)]
+    pub duration_s: u64,
+
+    /// Optional cgroup relative to /sys/fs/cgroup (inline mode)
+    #[arg(long)]
+    pub cgroup: Option<String>,
+
+    /// Netem delay in ms (inline mode)
+    #[arg(long, default_value_t = 50)]
+    pub netem_delay_ms: u32,
+
+    /// Netem loss percent (inline mode)
+    #[arg(long, default_value_t = 0.0)]
+    pub netem_loss_percent: f32,
+
+    /// Enable eBPF load (inline mode)
+    #[arg(long, default_value_t = false)]
+    pub load_ebpf: bool,
+}
+
+/// Summary statistics parsed from `ping` output.
+///
+/// # Notes:
+/// RTT values are in milliseconds. Packet loss is a percentage in the range `0.0..=100.0`.
+#[derive(Debug)]
+pub struct PingStats {
+	pub transmitted: u32,
+	pub received: u32,
+	pub loss_pct: f32,
+	pub rtt_min: f32,
+	pub rtt_avg: f32,
+	pub rtt_max: f32,
 }
 
 impl Plan {
@@ -106,4 +166,242 @@ impl Plan {
             .with_context(|| format!("failed to parse TOML in: {}", path.display()))?;
         Ok(plan)
     }
+}
+
+impl RunLikeArgs {
+    /// Builds a [`Plan`] from either a TOML config file or inline flags.
+    ///
+    /// This supports two modes:
+    /// - **Config mode:** `--config <path>`
+    /// - **Inline mode:** `--iface <name>` plus optional inline flags
+    ///
+    /// # Arguments
+    /// * `args` - Parsed CLI arguments used to construct the plan.
+    ///
+    /// # Returns
+    /// Returns a fully-populated [`Plan`] suitable for validation and execution.
+    ///
+    /// # Side Effects
+    /// Reads a config file from disk when `--config` is provided.
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - `--config` is provided but the file cannot be read or parsed as TOML, or
+    /// - inline mode is selected and `--iface` is missing.
+    pub fn plan_from_args(self) -> Result<Plan> {
+        // Mode A: config file
+        if let Some(path) = self.config {
+            return Plan::load_from_toml_file(path);
+        }
+
+        // Mode B: inline flags
+        let iface = self.iface
+            .ok_or_else(|| anyhow!("--iface is required when --config is not provided"))?;
+
+        Ok(Plan {
+            name: "inline".to_string(),
+            targets: Targets {
+                cgroup: self.cgroup,
+                iface: Some(iface),
+            },
+            schedule: Schedule {
+                duration_s: self.duration_s,
+            },
+            features: Features {
+                load_ebpf: self.load_ebpf,
+            },
+            injectors: Injectors {
+                qdisc_netem: QdiscNetem {
+                    delay_ms: self.netem_delay_ms,
+                    loss_percent: self.netem_loss_percent,
+                    duration: self.duration_s,
+                },
+            },
+        })
+    }
+}
+
+/// Prompts the user for input and returns a trimmed response.
+///
+/// # Arguments
+/// * `label` - Prompt label shown to the user.
+///
+/// # Returns
+/// The trimmed user input.
+///
+/// # Side Effects
+/// Prints to stdout and reads a line from stdin.
+///
+/// # Panics
+/// Panics if stdout flush or stdin read fails (uses `unwrap()`).
+pub fn prompt(label: &str) -> String {
+	print!("{}: ", label);
+	io::stdout().flush().unwrap();
+
+	let mut input = String::new();
+	io::stdin().read_line(&mut input).unwrap();
+
+	input.trim().to_string()
+}
+
+/// Validates a plan against the current host environment.
+///
+/// Performs lightweight pre-flight checks to catch obvious configuration errors
+/// before any chaos is applied.
+///
+/// # Arguments
+/// * `plan` - Chaos plan to validate.
+///
+/// # Returns
+/// Returns `Ok(())` if the environment appears compatible with the plan.
+///
+/// # Side Effects
+/// Executes read-only system checks (e.g. `ip link show`) and filesystem existence checks.
+///
+/// # Errors
+/// Returns an error if:
+/// - the referenced cgroup path does not exist, or
+/// - the referenced network interface does not exist, or
+/// - required system commands fail to execute.
+pub fn validate_plan(plan: &Plan) -> Result<()> {
+    println!("\nValidating chaos plan...\n");
+
+    // Check cgroup exists
+    if let Some(cg) = &plan.targets.cgroup {
+        let cgroup_path = format!("/sys/fs/cgroup/{}", cg);
+        if !Path::new(&cgroup_path).exists() {
+            bail!("cgroup does not exist: {}", cgroup_path);
+        }
+    }
+
+    if let Some(iface) = &plan.targets.iface.as_deref() {
+        validate_iface_exists(iface)?;
+    }
+
+    println!("\nConfig OK\n");
+
+    Ok(())
+}
+
+
+pub fn validate_iface_exists(iface: &str) -> Result<()> {
+    // Check network interface exists (if provided)
+    let status = Command::new("ip").args(["link", "show", iface]).status()?;
+    if !status.success() {
+        return Err(anyhow!("network interface not found: {}", iface));
+    }
+
+    Ok(())
+}
+
+/// Runs a ping test and parses packet loss + RTT stats.
+///
+/// If `iface` is in another network namespace, this uses `ip netns exec <ns> ping`.
+///
+/// # Arguments
+/// * `iface` - Interface name to test.
+/// * `target` - Intended target host/IP (currently unused; the function pings the interface IP).
+///
+/// # Returns
+/// Returns `Some(PingStats)` if ping output can be collected and parsed.
+/// Returns `None` if `ping` fails or output cannot be collected or parsed.
+///
+/// # Side Effects
+/// Executes:
+/// - `ip netns exec <ns> ping -I <iface> <target>`.
+pub fn run_ping_test(plan: &Plan, target: &str) -> Option<PingStats> {
+
+    let iface = plan.targets.iface
+        .as_deref()?;
+
+	let output = Command::new("ping")
+		.args([
+			"-I", iface,
+            "-w", &plan.schedule.duration_s.to_string(),
+			target
+		])
+		.output()
+		.ok()?;
+
+	let stdout = String::from_utf8_lossy(&output.stdout);
+
+	let mut transmitted = 0;
+	let mut received = 0;
+	let mut loss_pct = 0.0;
+	let mut rtt_min = 0.0;
+	let mut rtt_avg = 0.0;
+	let mut rtt_max = 0.0;
+
+	for line in stdout.lines() {
+		if line.contains("packets transmitted") {
+			let parts: Vec<&str> = line.split(',').collect();
+			transmitted = parts.get(0)?.trim().split(' ').next()?.parse().ok()?;
+			received = parts.get(1)?.trim().split(' ').next()?.parse().ok()?;
+			loss_pct = parts.get(2)?.trim().split('%').next()?.parse().ok()?;
+		}
+
+		if line.contains("rtt min/avg/max") {
+			let stats = line.split('=').nth(1)?.trim();
+			let nums: Vec<&str> = stats.split('/').collect();
+			rtt_min = nums.get(0)?.parse().ok()?;
+			rtt_avg = nums.get(1)?.parse().ok()?;
+			rtt_max = nums.get(2)?.parse().ok()?;
+		}
+	}
+
+	Some(PingStats {
+		transmitted,
+		received,
+		loss_pct,
+		rtt_min,
+		rtt_avg,
+		rtt_max,
+	})
+}
+
+/// Formats and prints a baseline vs during-chaos comparison report.
+///
+/// # Arguments
+/// * `iface` - Interface name under test.
+/// * `count` - Number of pings used to compute stats.
+/// * `control` - Baseline stats collected before chaos.
+/// * `modified` - Stats collected during chaos.
+///
+/// # Returns
+/// Returns the formatted report string and prints the formatted String.
+///
+/// # Side Effects
+/// Prints the report to standard output.
+pub fn print_comparison(iface: &str, duration: u64, control: &PingStats, modified: &PingStats) -> String {
+	let output = format!(
+"\n\n=== Network Comparison (Duration: {duration} ms) ===
+
+BEFORE CHAOS (baseline of {iface}):
+  transmitted : {ct_tx}
+  received    : {ct_rx}
+  loss %      : {ct_loss}
+  rtt (ms)    : min {ct_min} | avg {ct_avg} | max {ct_max}
+
+DURING CHAOS ({iface}):
+  transmitted : {md_tx}
+  received    : {md_rx}
+  loss %      : {md_loss}
+  rtt (ms)    : min {md_min} | avg {md_avg} | max {md_max}
+",
+		ct_tx = control.transmitted,
+		ct_rx = control.received,
+		ct_loss = control.loss_pct,
+		ct_min = control.rtt_min,
+		ct_avg = control.rtt_avg,
+		ct_max = control.rtt_max,
+		md_tx = modified.transmitted,
+		md_rx = modified.received,
+		md_loss = modified.loss_pct,
+		md_min = modified.rtt_min,
+		md_avg = modified.rtt_avg,
+		md_max = modified.rtt_max,
+	);
+
+	println!("{}", output);
+	output
 }

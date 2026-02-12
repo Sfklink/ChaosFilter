@@ -39,7 +39,7 @@ cgroup = "system.slice"
 iface = "enp34s0"
 
 [schedule]
-duration_ms = 20000
+duration_s = 20
 
 [features]
 load_ebpf = false

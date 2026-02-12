@@ -4,7 +4,7 @@ name = "netem-test"
 iface = "enp5s0"
 
 [schedule]
-duration_ms = 20000
+duration_s = 5
 
 [features]
 load_ebpf = false
