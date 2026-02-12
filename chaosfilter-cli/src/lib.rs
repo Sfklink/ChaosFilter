@@ -12,9 +12,6 @@ use anyhow::Result;
 use chaosfilter_common::RunLikeArgs;
 use clap::{Parser, Subcommand};
 
-pub mod cli;
-pub mod modules;
-
 /// Top-level CLI argument structure.
 ///
 /// This struct represents the root of the CLI command tree.
@@ -50,9 +47,6 @@ pub enum Commands {
 
     /// Run the chaos plan (apply -> hold -> revert)
     Chaos(RunLikeArgs),
-
-    /// Launch the interactive menu UI.
-    Menu,
 }
 
 /// CLI entrypoint used by `main`.
@@ -111,7 +105,6 @@ where
             let plan = args.plan_from_args()?;
             chaosfilter_controller::qdiscs::run_plan(&plan)?;
         }
-        Commands::Menu => cli::run(),
     }
 
     Ok(())
