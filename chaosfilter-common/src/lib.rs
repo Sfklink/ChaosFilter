@@ -374,7 +374,7 @@ pub fn run_ping_test(plan: &Plan, target: &str) -> Option<PingStats> {
 /// Prints the report to standard output.
 pub fn print_comparison(iface: &str, duration: u64, control: &PingStats, modified: &PingStats) -> String {
 	let output = format!(
-"\n\n=== Network Comparison (Duration: {duration} ms) ===
+"\n\n=== Network Comparison (Duration: {duration} seconds) ===
 
 BEFORE CHAOS (baseline of {iface}):
   transmitted : {ct_tx}
