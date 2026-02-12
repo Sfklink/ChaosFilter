@@ -85,8 +85,6 @@ pub struct Schedule {
     pub duration_s: u64,
 }
 
-/// Arguments shared by [`chaosfilter_controller::validate_plan`] and [`chaosfilter_controller::run_plan`]
-/// 
 /// This supports two different modes:
 ///     - **Config Mode:** Provide a config through `--config <path>`
 ///     - **Inline Mode:** Provide various arguments such as `--iface <name> --duration-ms <time in ms>`
@@ -174,9 +172,7 @@ impl RunLikeArgs {
     /// This supports two modes:
     /// - **Config mode:** `--config <path>`
     /// - **Inline mode:** `--iface <name>` plus optional inline flags
-    ///
-    /// # Arguments
-    /// * `args` - Parsed CLI arguments used to construct the plan.
+
     ///
     /// # Returns
     /// Returns a fully-populated [`Plan`] suitable for validation and execution.
@@ -283,7 +279,29 @@ pub fn validate_plan(plan: &Plan) -> Result<()> {
     Ok(())
 }
 
-
+/// Validates that a network interface exists on the host.
+///
+/// This function performs a lightweight check using
+/// `ip link show <iface>` to verify that the interface
+/// is present and accessible.
+///
+/// # Arguments
+/// * `iface` - Name of the network interface to validate.
+///
+/// # Returns
+/// Returns `Ok(())` if the interface exists.
+///
+/// # Side Effects
+/// Executes the system command:
+/// - `ip link show <iface>`
+///
+/// # Errors
+/// Returns an error if:
+/// - The `ip` command fails to execute, or
+/// - The interface does not exist.
+///
+/// # Requires
+/// The `ip` command must be available on the system.
 pub fn validate_iface_exists(iface: &str) -> Result<()> {
     // Check network interface exists (if provided)
     let status = Command::new("ip").args(["link", "show", iface]).status()?;
@@ -294,21 +312,33 @@ pub fn validate_iface_exists(iface: &str) -> Result<()> {
     Ok(())
 }
 
-/// Runs a ping test and parses packet loss + RTT stats.
+/// Executes a ping test and parses packet statistics.
 ///
-/// If `iface` is in another network namespace, this uses `ip netns exec <ns> ping`.
+/// This function runs a timed ping using the interface defined
+/// in the provided [`Plan`] and extracts transmission, loss,
+/// and RTT metrics.
 ///
 /// # Arguments
-/// * `iface` - Interface name to test.
-/// * `target` - Intended target host/IP (currently unused; the function pings the interface IP).
+/// * `plan` - Chaos plan containing target interface and duration.
+/// * `target` - Destination host or IP address to ping.
 ///
 /// # Returns
-/// Returns `Some(PingStats)` if ping output can be collected and parsed.
-/// Returns `None` if `ping` fails or output cannot be collected or parsed.
+/// Returns `Some(PingStats)` if:
+/// - The ping command executes successfully, and
+/// - Output can be parsed correctly.
+///
+/// Returns `None` if:
+/// - The interface is not set in the plan,
+/// - The command fails,
+/// - Or parsing fails.
 ///
 /// # Side Effects
 /// Executes:
-/// - `ip netns exec <ns> ping -I <iface> <target>`.
+/// - `ping -I <iface> -w <duration> <target>`
+///
+/// # Notes
+/// RTT values are reported in milliseconds.
+/// Packet loss is a percentage in the range `0.0..=100.0`.
 pub fn run_ping_test(plan: &Plan, target: &str) -> Option<PingStats> {
 
     let iface = plan.targets.iface
@@ -359,19 +389,26 @@ pub fn run_ping_test(plan: &Plan, target: &str) -> Option<PingStats> {
 	})
 }
 
-/// Formats and prints a baseline vs during-chaos comparison report.
+/// Formats and prints a baseline vs. during-chaos comparison report.
+///
+/// This function produces a human-readable comparison of ping
+/// statistics collected before and during chaos execution.
 ///
 /// # Arguments
-/// * `iface` - Interface name under test.
-/// * `count` - Number of pings used to compute stats.
-/// * `control` - Baseline stats collected before chaos.
-/// * `modified` - Stats collected during chaos.
+/// * `iface` - Network interface under test.
+/// * `duration` - Duration of the chaos run (in seconds).
+/// * `control` - Baseline [`PingStats`] collected before chaos.
+/// * `modified` - [`PingStats`] collected during chaos.
 ///
 /// # Returns
-/// Returns the formatted report string and prints the formatted String.
+/// Returns the formatted report string.
 ///
 /// # Side Effects
-/// Prints the report to standard output.
+/// - Prints the formatted report to standard output.
+///
+/// # Notes
+/// This function does not perform validation. It assumes both
+/// `control` and `modified` statistics are valid and comparable.
 pub fn print_comparison(iface: &str, duration: u64, control: &PingStats, modified: &PingStats) -> String {
 	let output = format!(
 "\n\n=== Network Comparison (Duration: {duration} seconds) ===

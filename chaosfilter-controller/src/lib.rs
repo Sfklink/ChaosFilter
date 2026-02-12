@@ -1,8 +1,12 @@
 //! Controller orchestration.
 //!
-//! High-level operations for validating and running a [`Plan`].
-//! This layer coordinates injectors (tc/qdisc, eBPF load, etc.) and ensures
-//! best-effort cleanup.
+//! High-level operations for validating and executing a [`chaosfilter_common::Plan`].
+//!
+//! This layer coordinates lower-level “injectors” (e.g., `tc`/qdisc, eBPF loaders, etc.)
+//! and is responsible for best-effort cleanup (reverting changes when possible)
+//!
+//! Submodules expose focused controller functionality, such as network qdisc orchestration
+//! in [`crate::qdiscs`]
 
 pub mod qdiscs;
 

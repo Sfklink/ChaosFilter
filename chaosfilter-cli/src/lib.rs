@@ -1,11 +1,11 @@
 //! ChaosFilter CLI (argument parsing + routing)
-//! 
-//! This crate's job is:
+//!
+//! This crate is responsible for:
 //! - Parsing CLI arguments via [`clap`]
-//! - Building a [`Plan`] from a config file or flags/tags
+//! - Building a [`chaosfilter_common::Plan`] from a config file or inline flags
 //! - Dispatching to controller operations
-//!     - [`chaosfilter_controller::validate_plan`]
-//!     - [`chaosfilter_controller::run_plan`]
+//!     - [`chaosfilter_common::validate_plan`]
+//!     - [`chaosfilter_controller::qdiscs::run_plan`]
 //!     - [`cli::run`]
 
 use anyhow::Result;
@@ -15,20 +15,34 @@ use clap::{Parser, Subcommand};
 pub mod cli;
 pub mod modules;
 
+/// Top-level CLI argument structure.
+///
+/// This struct represents the root of the CLI command tree.
+/// It is parsed using [`clap::Parser`] and contains the selected
+/// subcommand.
+///
+/// # Behavior
+/// Delegates execution to one of the variants in [`Commands`].
 #[derive(Parser, Debug)]
 #[command(
     name = "chaosfilter-cli", 
     version, 
     about = "ChaosFilter CLI & UI"
 )]
-
-/// Top-level CLI arguments.
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 }
 
 /// Available CLI subcommands.
+///
+/// Each variant corresponds to a distinct execution path
+/// within ChaosFilter.
+///
+/// # Variants
+/// - [`Commands::Validate`] → Validates a chaos plan.
+/// - [`Commands::Chaos`] → Executes a chaos plan (apply → hold → revert).
+/// - [`Commands::Menu`] → Launches the interactive CLI UI.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Validate a chaos plan (from config or inline flags)
@@ -43,26 +57,44 @@ pub enum Commands {
 
 /// CLI entrypoint used by `main`.
 ///
-/// Parses CLI arguments into [`Cli`] and dispatches to the selected subcommand.
+/// Parses CLI arguments into [`Cli`] and dispatches to the selected
+/// subcommand.
 ///
 /// # Arguments
-/// * `args` - Iterator of command-line arguments (typically from `std::env::args_os()`).
+/// * `args` - Iterator of command-line arguments (typically from
+///   [`std::env::args_os`]).
 ///
 /// # Returns
 /// Returns `Ok(())` if the selected command completes successfully.
 ///
+/// # Behavior
+/// - For [`Commands::Validate`]:
+///     - Builds a plan via [`RunLikeArgs::plan_from_args`].
+///     - Validates the plan using [`chaosfilter_common::validate_plan`].
+///
+/// - For [`Commands::Chaos`]:
+///     - Builds a plan via [`RunLikeArgs::plan_from_args`].
+///     - Executes the plan via [`chaosfilter_controller::qdiscs::run_plan`].
+///
+/// - For [`Commands::Menu`]:
+///     - Launches the interactive CLI loop via [`cli::run`].
+///
 /// # Side Effects
 /// - Prints status messages to standard output.
-/// - For `run` / `validate`, may modify system state via controller/injectors (e.g. tc/qdisc).
-/// - For `menu`, starts an interactive loop that reads from stdin and prints to stdout.
+/// - May modify system state via controller operations (e.g., `tc`, qdisc).
+/// - May launch an interactive stdin/stdout loop.
 ///
 /// # Errors
 /// Returns an error if:
-/// - argument parsing fails,
-/// - plan construction fails (config parsing or missing required inline flags),
-/// - validation fails,
-/// - running the plan fails,
-/// - or any downstream controller operation fails.
+/// - Argument parsing fails.
+/// - Plan construction fails (invalid config or missing inline flags).
+/// - Validation fails.
+/// - Chaos execution fails.
+/// - Any downstream controller operation fails.
+///
+/// # Panics
+/// This function does not explicitly panic.  
+/// Panics may propagate from lower-level modules if not handled.
 pub fn entry<I, T>(args: I) -> Result<()>
 where
     I: IntoIterator<Item = T>,

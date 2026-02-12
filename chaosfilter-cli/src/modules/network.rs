@@ -1,15 +1,16 @@
 //! Network stack module
 //!
-//! This module provides an interactive menu for ChaosFilter.
-//! It is responsible for:
-//! - Prompting the user
-//! - Parsing user inputs
-//! - Running baseline vs during-chaos ping comparisons
-//! - Calling [`chaosfilter_controller`] to apply/revert chaos (tc/qdisc/etc.)
+//! Provides the interactive CLI interface for network-related chaos testing.
 //!
-//! **Important:** This module does not implement tc/qdisc logic in and of itself.
-//! It delegates all execution to the controller layer (e.g. [`chaosfilter_controller::apply_plan`])
-//! to keep the UI layer safer and more human-readable.
+//! This module is responsible for:
+//! - Prompting the user for inputs
+//! - Validating network interface existence
+//! - Running baseline vs. during-chaos comparisons
+//! - Delegating execution to the controller layer
+//!
+//! **Important:** This module does not implement `tc`/qdisc logic directly.
+//! All execution is delegated to the controller layer (e.g. [`chaosfilter_controller::qdiscs`])
+//! to maintain separation between UI and system-level operations.
 
 use anyhow::{Context, Ok, Result};
 use chaosfilter_common::{RunLikeArgs, prompt};
@@ -18,24 +19,42 @@ use std::io::{self, Write};
 use std::process::Command;
 
 
-/// Runs the network stack interactive menu.
+/// Runs the interactive network stack module.
 ///
-/// The menu remains active until the user returns to the main menu.
+/// This function:
+/// 1. Prompts the user for a valid network interface.
+/// 2. Validates the interface using the `ip link show` command.
+/// 3. Displays a network-specific submenu.
+/// 4. Routes selections to the appropriate qdisc operations.
+/// 5. Continues looping until the user returns to the main menu.
 ///
 /// # Returns
-/// Returns `()` when the user exits the network module or when the environment is not initialized.
+/// This function returns `()` when the user exits the network module.
+///
+/// # Behavior
+/// The following submenu options are supported:
+/// - `1` → [`QdiscNetem::show_qdisc_state`]
+/// - `2` → [`QdiscNetem::create_restore_root`]
+/// - `3` → Runs an interactive chaos plan via [`run_plan_inputs`]
+/// - `4` → [`QdiscNetem::delete_root_qdisc`]
+/// - `5` → Returns to the main menu
 ///
 /// # Side Effects
-/// - Reads from stdin and prints to stdout.
-/// - Runs system commands (`ip`, `tc`, `ping`) via helper functions.
-/// - May apply/revert chaos through [`chaosfilter_controller::apply_plan`] and
-///   [`chaosfilter_controller::revert_plan`].
+/// - Reads user input from standard input.
+/// - Writes output to standard output.
+/// - Executes system commands (`ip`, `tc`) through controller helpers.
+/// - May apply or revert network chaos.
 ///
 /// # Requires
-/// The chaos network environment must be initialized (via setup scripts).
+/// - A valid Linux network interface.
+/// - CAP_NET_ADMIN privileges for qdisc operations (typically via `sudo`).
+///
+/// # Errors
+/// This function does not return a [`Result`].  
+/// Errors during chaos execution are printed to stderr.
 ///
 /// # Panics
-/// Panics if stdin/stdout operations fail (uses `unwrap()`).
+/// Panics if stdin/stdout operations fail due to internal `unwrap()` usage.
 pub fn run() {
 	let mut iface;
 
@@ -85,7 +104,33 @@ pub fn run() {
 	}
 }
 
-fn run_plan_inputs(iface: &str) -> Result<()> {
+/// Collects interactive inputs and executes a network chaos plan.
+///
+/// This helper function gathers delay, packet loss, and duration values
+/// from the user, constructs a [`RunLikeArgs`] instance, builds a plan,
+/// and executes it via [`run_plan`].
+///
+/// # Arguments
+/// * `iface` - The validated network interface to apply chaos against.
+///
+/// # Returns
+/// Returns `Ok(())` if the chaos plan executes successfully.
+///
+/// # Side Effects
+/// - Prompts the user for delay, loss, and duration values.
+/// - Constructs a [`RunLikeArgs`] configuration.
+/// - Builds a plan via [`RunLikeArgs::plan_from_args`].
+/// - Executes the plan via [`run_plan`].
+///
+/// # Errors
+/// Returns an error if:
+/// - Delay, loss, or duration cannot be parsed.
+/// - Plan construction fails.
+/// - Chaos execution fails.
+///
+/// # Requires
+/// CAP_NET_ADMIN privileges when applying qdisc modifications.
+pub fn run_plan_inputs(iface: &str) -> Result<()> {
 	let netem_delay_ms = prompt("Delay (ms)")
 		.parse().context("Invalid delay value.")?;
 	

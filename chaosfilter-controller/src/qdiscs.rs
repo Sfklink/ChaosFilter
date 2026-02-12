@@ -19,14 +19,25 @@ pub struct QdiscNetem {
 impl QdiscNetem {
     /// Prints the current qdisc state for `iface` (best effort).
     ///
+    /// This helper is intentionally non-fatal: failures are logged as warnings
+    /// rather than returned to the caller.
+    ///
     /// # Arguments
-    /// * `iface` - Interface to inspect.
+    /// * `iface` - Network interface to inspect.
+    ///
+    /// # Returns
+    /// This function returns `()`.
     ///
     /// # Side Effects
-    /// Executes `tc qdisc show dev <iface>` and may print warnings to stderr.
+    /// - Writes human-readable output to stdout/stderr.
+    /// - Executes `tc qdisc show dev <iface>`.
     ///
-    /// # Notes
-    /// This helper is intentionally non-fatal: failures are logged instead of returned.
+    /// # Errors
+    /// This function does not return a [`Result`].  
+    /// If `tc` fails or exits non-zero, a warning is printed.
+    ///
+    /// # Panics
+    /// This function does not explicitly panic.
     pub fn show_qdisc_state(iface: &str) {
         println!();
         println!("----------------------");
@@ -45,26 +56,31 @@ impl QdiscNetem {
 
     /// Applies `tc netem` according to `plan.injectors.qdisc_netem`.
     ///
+    /// This method updates internal injector state so that [`QdiscNetem::revert`]
+    /// can undo changes later.
+    ///
     /// # Arguments
     /// * `plan` - Chaos plan containing `targets.iface` and netem parameters.
     ///
     /// # Returns
-    /// Returns `Ok(())` if the qdisc was applied successfully.
+    /// Returns `Ok(())` if the qdisc is applied successfully.
     ///
     /// # Side Effects
-    /// Executes `tc qdisc replace ... netem delay <delay> loss <loss>` and updates internal state.
+    /// - Executes `tc qdisc replace dev <iface> root netem delay <delay> loss <loss>`.
+    /// - Prints status output to stdout/stderr.
+    /// - Updates internal state (`applied`, `iface`).
     ///
     /// # Requires
-    /// CAP_NET_ADMIN (typically `sudo`).
+    /// CAP_NET_ADMIN privileges (typically `sudo`).
     ///
     /// # Errors
     /// Returns an error if:
-    /// - the `tc` command fails to execute, or
-    /// - `tc` exits non-zero (often due to missing privileges).
+    /// - The `tc` command fails to execute, or
+    /// - `tc` exits non-zero (commonly due to insufficient privileges).
     ///
     /// # Panics
-    /// May panic if `plan.targets.iface` is `None` (uses `unwrap()`); callers should
-    /// call [`QdiscNetem::validate`] first or ensure the plan is valid.
+    /// May panic if `plan.targets.iface` is `None` (uses `unwrap()`).
+    /// Callers should ensure the plan is valid (e.g., via [`validate_plan`]).
     pub fn apply(&mut self, plan: &Plan) -> Result<()> {
         let iface = plan.targets.iface.as_deref().unwrap();
         let delay_ms = plan.injectors.qdisc_netem.delay_ms;
@@ -102,24 +118,28 @@ impl QdiscNetem {
 
     /// Restores a deterministic baseline root qdisc on `iface`.
     ///
-    /// This replaces the current root qdisc with `fq_codel`.
+    /// This replaces the current root qdisc with `fq_codel`. It does **not**
+    /// attempt to preserve or restore any previously existing qdisc configuration.
     ///
     /// # Arguments
-    /// * `iface` - Interface to restore.
+    /// * `iface` - Network interface to restore.
+    ///
+    /// # Returns
+    /// This function returns `()`.
     ///
     /// # Side Effects
-    /// Executes `tc qdisc replace dev <iface> root fq_codel`.
+    /// - Executes `tc qdisc replace dev <iface> root fq_codel`.
+    /// - Prints a success/failure message to stdout.
     ///
     /// # Requires
-    /// CAP_NET_ADMIN (typically `sudo`).
+    /// CAP_NET_ADMIN privileges (typically `sudo`).
     ///
     /// # Errors
-    /// Returns an error if `tc` fails to execute or exits non-zero.
+    /// This function does not return a [`Result`].  
+    /// Failures are reported via printed messages.
     ///
     /// # Notes
-    /// - This is a destructive operation: it does not attempt to restore a previously
-    ///   existing qdisc configuration.
-    /// - `fq_codel` is used as a known baseline to make [`QdiscNetem::revert`] deterministic.
+    /// `fq_codel` is used as a known baseline so [`QdiscNetem::revert`] can be deterministic.
     pub fn create_restore_root(iface: &str) {
         let status = Command::new("tc")
             .args(["qdisc", "replace", "dev", iface, "root", "fq_codel"])
@@ -140,6 +160,8 @@ impl QdiscNetem {
 
     /// Applies a root `netem` qdisc to an interface.
     ///
+    /// This is a convenience helper for applying netem directly without using a full [`Plan`].
+    ///
     /// # Arguments
     /// * `iface` - Network interface to modify.
     /// * `delay_ms` - Packet delay in milliseconds.
@@ -149,14 +171,15 @@ impl QdiscNetem {
     /// Returns `Ok(())` if the qdisc was applied successfully.
     ///
     /// # Side Effects
-    /// Modifies the interface's root qdisc via `tc qdisc replace`.
+    /// Executes:
+    /// - `tc qdisc replace dev <iface> root netem delay <delay> loss <loss>`
     ///
     /// # Requires
-    /// CAP_NET_ADMIN (typically `sudo`).
+    /// CAP_NET_ADMIN privileges (typically `sudo`).
     ///
     /// # Errors
     /// Returns an error if:
-    /// - the `tc` command fails to execute, or
+    /// - The `tc` command fails to execute, or
     /// - `tc` exits non-zero (often due to insufficient privileges).
     pub fn apply_netem(iface: &str, delay_ms: u32, loss_percent: f32) -> Result<()> {
         let delay = format!("{delay_ms}ms");
@@ -184,22 +207,34 @@ impl QdiscNetem {
         Ok(())
     }
 
-    /// Reverts any applied qdisc changes.
+    /// Reverts any applied qdisc changes (best effort).
+    ///
+    /// This method is intended to be idempotent: if no chaos was applied,
+    /// it prints a message and returns success without doing anything.
+    ///
+    /// # Arguments
+    /// This function takes no arguments.
     ///
     /// # Returns
-    /// Returns `Ok(())` if nothing was applied or if revert completed successfully.
+    /// Returns `Ok(())` if:
+    /// - No qdisc changes were applied, or
+    /// - Revert completed successfully.
     ///
     /// # Side Effects
-    /// If chaos was applied, restores the baseline root qdisc and prints verification output.
+    /// If chaos was applied:
+    /// - Restores a baseline root qdisc via [`QdiscNetem::create_restore_root`].
+    /// - Prints verification output via [`QdiscNetem::show_qdisc_state`].
+    /// - Clears internal state (`applied`, `iface`).
     ///
     /// # Requires
-    /// CAP_NET_ADMIN (typically `sudo`), when a revert is actually performed.
+    /// CAP_NET_ADMIN privileges (typically `sudo`) when a revert is performed.
     ///
     /// # Errors
-    /// Returns an error if restoring the baseline qdisc fails.
+    /// Returns an error only if internal assumptions are broken in a way that
+    /// causes downstream operations to fail unexpectedly.
     ///
-    /// # Notes
-    /// This method is intended to be idempotent: calling it multiple times should be safe.
+    /// # Panics
+    /// May panic if internal state is inconsistent (uses `unwrap()` on `self.iface`).
     pub fn revert(&mut self) -> Result<()> {
         if !self.applied {
             println!("[qdisc] nothing applied; skipping revert");
@@ -231,17 +266,22 @@ impl QdiscNetem {
     /// * `iface` - Network interface to modify.
     ///
     /// # Returns
-    /// Returns `Ok(())` regardless of whether a qdisc was present.
+    /// This function returns `()`.
     ///
     /// # Side Effects
-    /// Attempts to remove the interface's root qdisc via `tc qdisc del`.
+    /// - Attempts to remove the interface's root qdisc via:
+    ///   `sudo tc qdisc del dev <iface> root`
+    /// - Prints status output to stdout.
     ///
     /// # Requires
-    /// CAP_NET_ADMIN (typically `sudo`).
+    /// CAP_NET_ADMIN privileges (typically `sudo`).
     ///
     /// # Errors
-    /// Returns an error only if the `tc` command fails to execute.
-    /// Non-zero exit codes are logged as warnings and ignored.
+    /// This function does not return a [`Result`].  
+    /// Failures are reported via printed messages (including the case where no root qdisc exists).
+    ///
+    /// # Panics
+    /// This function does not explicitly panic.
     pub fn delete_root_qdisc(iface: &str) {
         let status = Command::new("sudo")
             .args(["tc", "qdisc", "del", "dev", iface, "root"])
@@ -261,31 +301,36 @@ impl QdiscNetem {
     }
 }
 
-/// Runs the plan end-to-end (apply → hold → revert).
+/// Runs the plan end-to-end (baseline → apply → hold → revert).
 ///
-/// This is the one-shot “just run it” entrypoint used by the CLI.
+/// This is the one-shot entrypoint used by the CLI to execute network chaos
+/// and produce a basic “before vs during” ping comparison report.
 ///
 /// # Arguments
 /// * `plan` - Chaos plan to run.
 ///
 /// # Returns
-/// Returns `Ok(())` after chaos has been applied, held for the configured duration,
-/// and reverted successfully.
+/// Returns `Ok(())` after:
+/// - Baseline ping stats are collected,
+/// - Chaos is applied and measured,
+/// - And cleanup/revert succeeds.
 ///
 /// # Side Effects
-/// - Applies and reverts system-level chaos (e.g. tc/qdisc).
-/// - Sleeps the current thread for `plan.schedule.duration_s`.
-/// - Installs a Ctrl+C handler that attempts cleanup and exits the process.
+/// - Executes `ping` to collect baseline and chaos metrics.
+/// - Applies and reverts system-level chaos via [`QdiscNetem`].
+/// - Prints progress and a comparison report to stdout.
 ///
 /// # Requires
-/// Running network chaos typically requires CAP_NET_ADMIN (often `sudo`), depending on the injector.
+/// - A valid [`Plan`] (validated by [`validate_plan`]).
+/// - CAP_NET_ADMIN privileges (typically `sudo`) to modify qdiscs.
+/// - Network connectivity to the ping target (currently `8.8.8.8`).
 ///
 /// # Errors
 /// Returns an error if:
-/// - applying the plan fails,
-/// - the Ctrl+C handler cannot be installed,
-/// - sleeping is interrupted by process exit,
-/// - or reverting the plan fails.
+/// - Plan validation fails.
+/// - `targets.iface` is missing.
+/// - Baseline or chaos ping stats cannot be collected.
+/// - Applying or reverting the qdisc fails.
 pub fn run_plan(plan: &Plan) -> Result<()> {
     validate_plan(plan)?;
 

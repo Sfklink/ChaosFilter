@@ -5,22 +5,33 @@
 
 use std::io::{self, Write};
 
-/// Displays the menu of ChaosFilter and parses the user's input.
-/// 
-/// This function will print all of the available subsystems that can 
-/// be tested with ChaosFilter and blocks until input is received.
-/// 
+/// Displays the main ChaosFilter menu and parses the user's selection.
+///
+/// This function prints the available subsystems that can be tested
+/// and blocks until input is received from standard input.
+///
 /// # Returns
-/// A numeric selection:
+/// Returns a numeric selection corresponding to the chosen subsystem:
 /// - `1` → Network Stack
 /// - `2` → Disk I/O
 /// - `3` → CPU / Scheduling
 /// - `4` → Exit
-/// 
-/// Returns '0' if the input is invalid or cannot be parsed.
-/// 
+///
+/// Returns `0` if the input is invalid or cannot be parsed into a `u32`.
+///
+/// # Side Effects
+/// - Writes menu text to standard output.
+/// - Flushes [`std::io::Stdout`] to ensure the prompt appears immediately.
+/// - Blocks while waiting for input from [`std::io::stdin`].
+///
+/// # Errors
+/// This function does not return a [`Result`].  
+/// Invalid numeric input is handled gracefully by returning `0`.
+///
 /// # Panics
-/// Panics if reading from standard input or flushing stdout fails.
+/// Panics if:
+/// - Flushing stdout fails, or
+/// - Reading from standard input fails.
 pub fn show_main_menu() -> u32 {
 	println!();
 	println!("What system would you like to test?");
