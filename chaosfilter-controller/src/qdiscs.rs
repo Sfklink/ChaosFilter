@@ -4,7 +4,7 @@
 //! a known-good baseline on revert.
 
 use anyhow::{anyhow, Context, Result};
-use chaosfilter_common::{Plan, RunLikeArgs, print_comparison, run_ping_test, validate_plan};
+use chaosfilter_common::{Plan, RunLikeArgs, print_comparison, run_ping_test, validate_plan, RunInlineArgs, RunMode};
 use std::process::Command;
 
 /// tc netem injector state.
@@ -340,15 +340,37 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
         .ok_or_else(|| anyhow!("targets.iface required for ping report"))?;
 
     let base_args = RunLikeArgs {
-        config: None,
-        iface: plan.targets.iface.clone(),
-        duration_s: plan.schedule.duration_s,
-        cgroup: None,
-        netem_delay_ms: 0,
-        netem_loss_percent: 0.0,
-        load_ebpf: false
-    };
+        mode: RunMode::Inline(RunInlineArgs {
+            // required in inline mode
+            netem_enabled: true,
+            iface: plan.targets.iface.clone().unwrap_or_default(), // see note below
 
+            // schedule
+            duration_s: plan.schedule.duration_s,
+
+            // targets
+            cgroup: plan.targets.cgroup.clone(),
+
+            // netem baseline
+            netem_delay_ms: 0,
+            netem_loss_percent: 0.0,
+
+            // features
+            load_ebpf: false,
+
+            // cgroup injector baseline (disabled)
+            cgroup_knobs_enabled: false,
+            cgroup_pid: None,
+            cgroup_move_pid: true,
+            cgroup_enable: vec![],
+
+            cgroup_cpu_max: None,
+            cgroup_cpu_weight: None,
+            cgroup_mem_max: None,
+            cgroup_mem_high: None,
+            cgroup_swap_max: None,
+        }),
+    };
     let base_plan = base_args.plan_from_args()?;
 
     // 1) Run Baseline (Control)

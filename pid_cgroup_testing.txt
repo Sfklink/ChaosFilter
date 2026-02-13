@@ -1,0 +1,75 @@
+Instructions for how to do good stuff and to properly test the functionality of pid_cgroup.rs, the new functionality to be added.
+ye :D
+
+#### Run this command in the same shell that you're going to run the program.:
+stat -fc %T /sys/fs/cgroup
+# should print: cgroup2fs
+
+####And then create a sleep process that will last ten minutes (sleep 600):
+sleep 600 &
+export CF_TEST_PID=$!
+echo "PID=$CF_TEST_PID"
+
+####Check that the process is living:
+ps -p "$CF_TEST_PID" -o pid,comm,args
+
+####Pick a cgroup path (relative to /sys/fs/cgroup
+export CF_TEST_CG="chaosfilter/test"
+sudo mkdir -p "/sys/fs/cgroup/$CF_TEST_CG"
+
+
+####Enable cpu + memory on the root's subtree_control
+echo "+cpu"    | sudo tee /sys/fs/cgroup/cgroup.subtree_control >/dev/null
+echo "+memory" | sudo tee /sys/fs/cgroup/cgroup.subtree_control >/dev/null
+
+
+
+OR JUST RUN THIS IF YOU WANNA BE NASTY:
+
+
+sleep 600 & PID=$!
+
+sudo target/debug/chaosfilter-cli cgroup-test inline \
+  --iface enp34s0 \
+  --duration-s 10 \
+  --cgroup chaosfilter/test \
+  --cgroup-knobs-enabled \
+  --cgroup-pid "$PID" \
+  --cgroup-enable cpu --cgroup-enable memory \
+  --cgroup-cpu-max "50000 100000" \
+  --cgroup-mem-max "268435456"
+
+It might bark at you, it might not, usually for OS error 22, cgroup is not allowed to host processes, because enable controllers for child
+
+Check these two:
+cat /sys/fs/cgroup/cgroup.subtree_control
+
+echo "+cpu +memory" | sudo tee /sys/fs/cgroup/user.slice/cgroup.subtree_control
+
+should see +cpu +memory or additional things, for example when I ran it I got:
+cpuset cpu io memory pids
+
+So that's fine.  Create a test cgroup under your user.slice:
+sudo mkdir -p /sys/fs/cgroup/user.slice/chaosfilter
+
+Re-run these two:
+echo "+cpu +memory" | sudo tee /sys/fs/cgroup/user.slice/cgroup.subtree_control
+cat /sys/fs/cgroup/user.slice/cgroup.subtree_control
+
+Then, try:
+
+sudo target/debug/chaosfilter-cli cgroup-test inline \
+  --iface enp34s0 \
+  --duration-s 20 \
+  --cgroup user.slice/chaosfilter/test \
+  --cgroup-knobs-enabled \
+  --cgroup-pid "$PID" \
+  --cgroup-enable cpu --cgroup-enable memory \
+  --cgroup-cpu-max "20000 100000"
+
+But then that still throws OS error 22
+so we try targeting user.slice slightly differently:
+UID=$(id -u)
+CG="user.slice/user-$UID.slice/user@$UID.service/chaosfilter-test"
+sudo mkdir -p "/sys/fs/cgroup/$CG"
+

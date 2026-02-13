@@ -9,4 +9,5 @@
 //! in [`crate::qdiscs`]
 
 pub mod qdiscs;
+pub mod pid_cgroup;
 

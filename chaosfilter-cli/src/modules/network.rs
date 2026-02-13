@@ -140,14 +140,36 @@ pub fn run_plan_inputs(iface: &str) -> Result<()> {
 	let duration_s = prompt("Duration (seconds)")
 		.parse().context("Invalid duration value.")?;
 
-	let chaos_args = RunLikeArgs {
-		config: None,
-		iface: Some(iface.to_string()),
-		duration_s,
-		cgroup: None,
-		netem_delay_ms,
-		netem_loss_percent,
-		load_ebpf: false
+	let chaos_args = let base_args = RunLikeArgs {
+		mode: RunMode::Inline(RunInlineArgs {
+			// required in inline mode
+			iface: plan.targets.iface.clone().unwrap_or_default(), // see note below
+
+			// schedule
+			duration_s: plan.schedule.duration_s,
+
+			// targets
+			cgroup: plan.targets.cgroup.clone(),
+
+			// netem baseline
+			netem_delay_ms: 0,
+			netem_loss_percent: 0.0,
+
+			// features
+			load_ebpf: false,
+
+			// cgroup injector baseline (disabled)
+			cgroup_knobs_enabled: false,
+			cgroup_pid: None,
+			cgroup_move_pid: true,
+			cgroup_enable: vec![],
+
+			cgroup_cpu_max: None,
+			cgroup_cpu_weight: None,
+			cgroup_mem_max: None,
+			cgroup_mem_high: None,
+			cgroup_swap_max: None,
+		}),
 	};
 
 	let plan = chaos_args.plan_from_args()?;

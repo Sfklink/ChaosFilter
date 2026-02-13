@@ -2,7 +2,6 @@
 //! 
 //! Central dispatcher that maps menu options to module entry points.
 
-use crate::modules;
 
 /// Routes a user menu selection to the appropriate subsystem module.
 ///

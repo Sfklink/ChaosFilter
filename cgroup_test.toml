@@ -1,0 +1,28 @@
+name = "cgroup-test"
+
+[targets]
+# pick the cgroup you created earlier
+cgroup = "user.slice/chaosfilter/test"
+# still required by validate_plan right now
+iface = "enp34s0"
+
+[schedule]
+duration_s = 5
+
+[features]
+load_ebpf = false
+
+[injectors.qdisc_netem]
+# keep disabled / neutral
+delay_ms = 0
+loss_percent = 0
+duration = 5
+
+[injectors.cgroup_knobs]
+enabled = true
+pid = 12345          # set this before running
+move_pid = true
+enable = []          # don’t touch subtree_control while stabilizing
+cpu_max = "20000 100000"
+# cpu_weight = 100
+# mem_max = "268435456"
