@@ -105,11 +105,12 @@ where
             let plan = args.plan_from_args()?;
             chaosfilter_common::validate_plan(&plan)?;
         }
+
         Commands::Chaos(args) => {
             let plan = args.plan_from_args()?;
-            chaosfilter_controller::qdiscs::run_plan(&plan)?;
+            chaosfilter_controller::run_plan(&plan)?;
         }
-    }
 
+    }
     Ok(())
 }

@@ -4,7 +4,7 @@
 //! a known-good baseline on revert.
 
 use anyhow::{anyhow, Context, Result};
-use chaosfilter_common::{Plan, RunLikeArgs, print_comparison, run_ping_test, validate_plan, RunInlineArgs, RunMode};
+use chaosfilter_common::{Plan, RunLikeArgs, print_comparison, run_ping_test, RunInlineArgs, RunMode};
 use std::process::Command;
 
 /// tc netem injector state.
@@ -332,7 +332,15 @@ impl QdiscNetem {
 /// - Baseline or chaos ping stats cannot be collected.
 /// - Applying or reverting the qdisc fails.
 pub fn run_plan(plan: &Plan) -> Result<()> {
-    validate_plan(plan)?;
+    let netem = &plan.injectors.qdisc_netem;
+    let netem_is_noop = netem.delay_ms == 0 && netem.loss_percent == 0.0;
+    if netem_is_noop {
+        return Ok(());
+    }
+    if !plan.injectors.qdisc_netem.enabled {
+        return Ok(());
+    }
+
 
     let ping_target = "8.8.8.8";
 

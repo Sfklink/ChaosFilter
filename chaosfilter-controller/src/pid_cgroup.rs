@@ -29,12 +29,11 @@ pub struct PidCgroupKnobs {
 }
 
 pub fn run_plan(plan: &Plan) -> Result<()> {
-    validate_plan(plan)?;
-
     if !plan.injectors.cgroup_knobs.enabled {
-        return Err(anyhow!("injectors.cgroup_knobs.enabled is false; nothing to do"));
+        return Ok(());
     }
-
+    validate_plan(plan)?;
+    
     let mut cg = PidCgroupKnobs::default();
     cg.apply(plan)?;
 
