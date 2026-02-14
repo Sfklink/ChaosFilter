@@ -12,9 +12,6 @@ use anyhow::Result;
 use chaosfilter_common::RunLikeArgs;
 use clap::{Parser, Subcommand};
 
-// pub mod cli;
-// pub mod modules;
-
 /// Top-level CLI argument structure.
 ///
 /// This struct represents the root of the CLI command tree.
@@ -105,12 +102,11 @@ where
             let plan = args.plan_from_args()?;
             chaosfilter_common::validate_plan(&plan)?;
         }
-
         Commands::Chaos(args) => {
             let plan = args.plan_from_args()?;
             chaosfilter_controller::run_plan(&plan)?;
         }
-
     }
+
     Ok(())
 }
