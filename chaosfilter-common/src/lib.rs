@@ -6,7 +6,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Subcommand, Parser};
 use serde::{Deserialize, Serialize};
-use std::{fs, io::{self, Write}, path::Path, process::Command};
+use std::{fs, io::{self, Write}, path::Path, process::{Stdio, Command}};
 
 
 /// Top-level chaos plan configuration.
@@ -347,31 +347,6 @@ impl Plan {
     }
 }
 
-
-
-/// Prompts the user for input and returns a trimmed response.
-///
-/// # Arguments
-/// * `label` - Prompt label shown to the user.
-///
-/// # Returns
-/// The trimmed user input.
-///
-/// # Side Effects
-/// Prints to stdout and reads a line from stdin.
-///
-/// # Panics
-/// Panics if stdout flush or stdin read fails (uses `unwrap()`).
-pub fn prompt(label: &str) -> String {
-    print!("{}: ", label);
-    io::stdout().flush().unwrap();
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-
-    input.trim().to_string()
-}
-
 /// Validates a plan against the current host environment.
 ///
 /// Performs lightweight pre-flight checks to catch obvious configuration errors
@@ -434,10 +409,18 @@ pub fn validate_plan(plan: &Plan) -> Result<()> {
 ///
 /// # Requires
 /// The `ip` command must be available on the system.
+///
+
 pub fn validate_iface_exists(iface: &str) -> Result<()> {
+
     // Check network interface exists (if provided)
-    let status = Command::new("ip").args(["link", "show", iface]).status()?;
-    if !status.success() {
+    // this needs to be moved to qdiscs.rs
+    // This was always printing to standard output.  I hated it.
+    let status = Command::new("ip")
+        .args(["link", "show", iface])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;    if !status.success() {
         return Err(anyhow!("network interface not found: {}", iface));
     }
 

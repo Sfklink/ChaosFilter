@@ -5,7 +5,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use chaosfilter_common::{Plan, RunLikeArgs, print_comparison, run_ping_test, RunInlineArgs, RunMode};
-use std::process::Command;
+use std::process::{Stdio, Command};
 
 /// tc netem injector state.
 ///
@@ -38,14 +38,15 @@ impl QdiscNetem {
     ///
     /// # Panics
     /// This function does not explicitly panic.
-    pub fn show_qdisc_state(iface: &str) {
-        println!();
-        println!("----------------------");
-        println!("Current qdiscs:");
-        println!("----------------------");
+    ///
 
+
+
+    pub fn show_qdisc_state(iface: &str) {
         match Command::new("tc")
             .args(["qdisc", "show", "dev", iface])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
         {
             Ok(status) if status.success() => {}
@@ -53,6 +54,7 @@ impl QdiscNetem {
             Err(e) => eprintln!("[qdisc] warning: failed to run tc qdisc show: {}", e),
         }
     }
+
 
     /// Applies `tc netem` according to `plan.injectors.qdisc_netem`.
     ///
@@ -109,7 +111,7 @@ impl QdiscNetem {
         if !status.success() {
             return Err(anyhow!("tc failed applying netem on {} (need sudo)", iface));
         }
-        Self::show_qdisc_state(iface);
+
 
         self.applied = true;
         self.iface = Some(iface.to_string());
@@ -249,7 +251,8 @@ impl QdiscNetem {
         Self::create_restore_root(iface);
 
         // Verbose verification
-        Self::show_qdisc_state(iface);
+        // DEBUG
+        // Self::show_qdisc_state(iface);
 
         self.applied = false;
         self.iface = None;
@@ -341,6 +344,9 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
         return Ok(());
     }
 
+    //
+    //  Hardcoded ping IP is unacceptable, needs to be moved to args & config
+    //
 
     let ping_target = "8.8.8.8";
 

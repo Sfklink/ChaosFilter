@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-chaosfilter-common = { path = "../chaosfilter-common", features = ["user"] }
+chaosfilter-common = { path = "../../chaosfilter-common", features = ["user"] }
 
 anyhow = { workspace = true, default-features = true }
 aya = { workspace = true }
