@@ -4,8 +4,8 @@
 //! a known-good baseline on revert.
 
 use anyhow::{anyhow, Context, Result};
-use chaosfilter_common::{Plan, RunLikeArgs, print_comparison, run_ping_test, validate_plan};
-use std::process::Command;
+use chaosfilter_common::{Plan, RunLikeArgs, print_comparison, run_ping_test, validate_plan, RunMode, RunInlineArgs};
+use std::process::{Command, Stdio};
 
 /// tc netem injector state.
 ///
@@ -33,19 +33,20 @@ impl QdiscNetem {
     /// - Executes `tc qdisc show dev <iface>`.
     ///
     /// # Errors
-    /// This function does not return a [`Result`].  
+    /// This function does not return a [`Result`].
     /// If `tc` fails or exits non-zero, a warning is printed.
     ///
     /// # Panics
     /// This function does not explicitly panic.
-    pub fn show_qdisc_state(iface: &str) {
-        println!();
-        println!("----------------------");
-        println!("Current qdiscs:");
-        println!("----------------------");
+    ///
 
+
+
+    pub fn show_qdisc_state(iface: &str) {
         match Command::new("tc")
             .args(["qdisc", "show", "dev", iface])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
         {
             Ok(status) if status.success() => {}
@@ -135,7 +136,7 @@ impl QdiscNetem {
     /// CAP_NET_ADMIN privileges (typically `sudo`).
     ///
     /// # Errors
-    /// This function does not return a [`Result`].  
+    /// This function does not return a [`Result`].
     /// Failures are reported via printed messages.
     ///
     /// # Notes
@@ -277,7 +278,7 @@ impl QdiscNetem {
     /// CAP_NET_ADMIN privileges (typically `sudo`).
     ///
     /// # Errors
-    /// This function does not return a [`Result`].  
+    /// This function does not return a [`Result`].
     /// Failures are reported via printed messages (including the case where no root qdisc exists).
     ///
     /// # Panics
@@ -332,7 +333,18 @@ impl QdiscNetem {
 /// - Baseline or chaos ping stats cannot be collected.
 /// - Applying or reverting the qdisc fails.
 pub fn run_plan(plan: &Plan) -> Result<()> {
-    validate_plan(plan)?;
+    let netem = &plan.injectors.qdisc_netem;
+    let netem_is_noop = netem.delay_ms == 0 && netem.loss_percent == 0.0;
+    if netem_is_noop {
+        return Ok(());
+    }
+    if !plan.injectors.qdisc_netem.enabled {
+        return Ok(());
+    }
+
+    //
+    //  Hardcoded ping IP is unacceptable, needs to be moved to args & config
+    //
 
     let ping_target = "8.8.8.8";
 
@@ -340,22 +352,40 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
         .ok_or_else(|| anyhow!("targets.iface required for ping report"))?;
 
     let base_args = RunLikeArgs {
-        config: None,
-        iface: plan.targets.iface.clone(),
-        duration_s: plan.schedule.duration_s,
-        cgroup: None,
-        netem_delay_ms: 0,
-        netem_loss_percent: 0.0,
-        load_ebpf: false
-    };
+        mode: RunMode::Inline(RunInlineArgs {
+            // required in inline mode
+            netem_enabled: true,
+            iface: plan.targets.iface.clone().unwrap_or_default(), // see note below
 
+            // schedule
+            duration_s: plan.schedule.duration_s,
+
+            // targets
+            cgroup: plan.targets.cgroup.clone(),
+
+            // netem baseline
+            netem_delay_ms: 0,
+            netem_loss_percent: 0.0,
+
+            // features
+            load_ebpf: false,
+
+            // cgroup injector baseline (disabled)
+            cgroup_knobs_enabled: false,
+            cgroup_pid: None,
+            cgroup_move_pid: true,
+            cgroup_enable: vec![],
+
+
+        }),
+    };
     let base_plan = base_args.plan_from_args()?;
 
     // 1) Run Baseline (Control)
     println!("Running baseline ping test (before chaos) for {} seconds...", base_plan.schedule.duration_s);
 	let control_stats = run_ping_test(&base_plan, ping_target)
 		.context("Failed to collect baseline ping stats")?;
-    
+
     // 2) Apply qdisc
     let mut qdisc = QdiscNetem::default();
     qdisc.apply(plan)?;
