@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "chaosfilter", "chaosfilter-cli",
     "chaosfilter-common", "chaosfilter-controller",
-    "chaosfilter-ebpf",
+    "archive/chaosfilter-ebpf",
 ]
 # At run time, the first problem to start is the CLI
 default-members = ["chaosfilter-cli"]
