@@ -6,7 +6,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Subcommand, Parser};
 use serde::{Deserialize, Serialize};
-use std::{fs, io::{self, Write}, path::Path, process::{Stdio, Command}};
+use std::{fs, path::Path, process::{Stdio, Command}};
 
 
 /// Top-level chaos plan configuration.

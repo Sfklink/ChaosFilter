@@ -4,7 +4,7 @@
 //! a known-good baseline on revert.
 
 use anyhow::{anyhow, Context, Result};
-use chaosfilter_common::{Plan, RunLikeArgs, print_comparison, run_ping_test, validate_plan, RunMode, RunInlineArgs};
+use chaosfilter_common::{Plan, RunLikeArgs, print_comparison, run_ping_test, RunMode, RunInlineArgs};
 use std::process::{Command, Stdio};
 
 /// tc netem injector state.
@@ -244,7 +244,6 @@ impl QdiscNetem {
 
         let iface = self.iface.as_deref().unwrap();
 
-        println!("[qdisc] reverting qdisc on {}", iface);
 
         // Deterministic revert: restore the known-good root qdisc.
         Self::create_restore_root(iface);
@@ -376,12 +375,17 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
             cgroup_move_pid: true,
             cgroup_enable: vec![],
 
-
+            cgroup_cpu_max: None,
+            cgroup_cpu_weight: None,
+            cgroup_mem_max: None,
+            cgroup_mem_high: None,
+            cgroup_swap_max: None,
         }),
     };
     let base_plan = base_args.plan_from_args()?;
 
     // 1) Run Baseline (Control)
+    // This needs to be
     println!("Running baseline ping test (before chaos) for {} seconds...", base_plan.schedule.duration_s);
 	let control_stats = run_ping_test(&base_plan, ping_target)
 		.context("Failed to collect baseline ping stats")?;
