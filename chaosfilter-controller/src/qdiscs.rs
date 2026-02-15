@@ -4,7 +4,7 @@
 //! a known-good baseline on revert.
 
 use anyhow::{anyhow, Context, Result};
-use chaosfilter_common::{Plan, RunLikeArgs, print_comparison, run_ping_test, validate_plan, RunMode, RunInlineArgs};
+use chaosfilter_common::{Plan, RunLikeArgs, print_comparison, run_ping_test, RunMode, RunInlineArgs};
 use std::process::{Command, Stdio};
 
 /// tc netem injector state.
@@ -43,6 +43,7 @@ impl QdiscNetem {
 
 
     pub fn show_qdisc_state(iface: &str) {
+        println!("[DEBUG] running show_qdisc_state()");
         match Command::new("tc")
             .args(["qdisc", "show", "dev", iface])
             .stdout(Stdio::null())
@@ -83,6 +84,7 @@ impl QdiscNetem {
     /// May panic if `plan.targets.iface` is `None` (uses `unwrap()`).
     /// Callers should ensure the plan is valid (e.g., via [`validate_plan`]).
     pub fn apply(&mut self, plan: &Plan) -> Result<()> {
+        println!("[DEBUG] running apply()");
         let iface = plan.targets.iface.as_deref().unwrap();
         let delay_ms = plan.injectors.qdisc_netem.delay_ms;
         let loss_percent = plan.injectors.qdisc_netem.loss_percent;
@@ -142,6 +144,7 @@ impl QdiscNetem {
     /// # Notes
     /// `fq_codel` is used as a known baseline so [`QdiscNetem::revert`] can be deterministic.
     pub fn create_restore_root(iface: &str) {
+        println!("[DEBUG] running create_restore_root({})", iface);
         let status = Command::new("tc")
             .args(["qdisc", "replace", "dev", iface, "root", "fq_codel"])
             .status();
@@ -183,6 +186,7 @@ impl QdiscNetem {
     /// - The `tc` command fails to execute, or
     /// - `tc` exits non-zero (often due to insufficient privileges).
     pub fn apply_netem(iface: &str, delay_ms: u32, loss_percent: f32) -> Result<()> {
+        println!("[DEBUG] running apply_netem()");
         let delay = format!("{delay_ms}ms");
         let loss = format!("{loss_percent}%");
 
@@ -237,6 +241,7 @@ impl QdiscNetem {
     /// # Panics
     /// May panic if internal state is inconsistent (uses `unwrap()` on `self.iface`).
     pub fn revert(&mut self) -> Result<()> {
+        println!("[DEBUG] running revert()");
         if !self.applied {
             println!("[qdisc] nothing applied; skipping revert");
             return Ok(());
@@ -284,6 +289,7 @@ impl QdiscNetem {
     /// # Panics
     /// This function does not explicitly panic.
     pub fn delete_root_qdisc(iface: &str) {
+        println!("[DEBUG] running delete_root_qdisc()");
         let status = Command::new("sudo")
             .args(["tc", "qdisc", "del", "dev", iface, "root"])
             .status();
@@ -333,6 +339,7 @@ impl QdiscNetem {
 /// - Baseline or chaos ping stats cannot be collected.
 /// - Applying or reverting the qdisc fails.
 pub fn run_plan(plan: &Plan) -> Result<()> {
+    println!("[DEBUG] running run_plan()");
     let netem = &plan.injectors.qdisc_netem;
     let netem_is_noop = netem.delay_ms == 0 && netem.loss_percent == 0.0;
     if netem_is_noop {
@@ -376,7 +383,11 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
             cgroup_move_pid: true,
             cgroup_enable: vec![],
 
-
+            cgroup_cpu_max: None,
+            cgroup_cpu_weight: None,
+            cgroup_mem_max: None,
+            cgroup_mem_high: None,
+            cgroup_swap_max: None,
         }),
     };
     let base_plan = base_args.plan_from_args()?;
