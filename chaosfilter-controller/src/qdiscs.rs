@@ -4,40 +4,19 @@
 //! a known-good baseline on revert.
 
 use anyhow::{anyhow, Context, Result};
+use chaosfilter_common::{Plan, RunLikeArgs, print_comparison, run_ping_test, RunMode, RunInlineArgs};
 use std::process::{Command, Stdio};
-use crate::{Plan, RunConfigArgs};
 
 /// tc netem injector state.
 ///
 /// Tracks whether chaos was applied so `revert` can be idempotent.
-///
-// THIS IS A PROBLEM.
-// Here, we are making the mistake of supplying domain logic to itself internally, we don't like that.
-// It takes in arguments, it does the thing.  Right now, this stinks, and is not testable.
 #[derive(Default)]
-pub struct NetworkConfig {
+pub struct QdiscNetem {
     applied: bool,
     iface: Option<String>,
-    pub duration_s: u64,
-    pub netem_delay_ms: i32,
-    pub netem_loss_percent: f64,
 }
 
-/// Summary statistics parsed from `ping` output.
-///
-/// # Notes:
-/// RTT values are in milliseconds. Packet loss is a percentage in the range `0.0..=100.0`.
-#[derive(Debug)]
-pub struct PingStats {
-    pub transmitted: u32,
-    pub received: u32,
-    pub loss_pct: f32,
-    pub rtt_min: f32,
-    pub rtt_avg: f32,
-    pub rtt_max: f32,
-}
-
-impl NetworkConfig {
+impl QdiscNetem {
     /// Prints the current qdisc state for `iface` (best effort).
     ///
     /// This helper is intentionally non-fatal: failures are logged as warnings
@@ -76,62 +55,9 @@ impl NetworkConfig {
         }
     }
 
-    /// Formats and prints a baseline vs. during-chaos comparison report.
-    ///
-    /// This function produces a human-readable comparison of ping
-    /// statistics collected before and during chaos execution.
-    ///
-    /// # Arguments
-    /// * `iface` - Network interface under test.
-    /// * `duration` - Duration of the chaos run (in seconds).
-    /// * `control` - Baseline [`PingStats`] collected before chaos.
-    /// * `modified` - [`PingStats`] collected during chaos.
-    ///
-    /// # Returns
-    /// Returns the formatted report string.
-    ///
-    /// # Side Effects
-    /// - Prints the formatted report to standard output.
-    ///
-    /// # Notes
-    /// This function does not perform validation. It assumes both
-    /// `control` and `modified` statistics are valid and comparable.
-    pub fn print_comparison(iface: &str, duration: u64, control: &PingStats, modified: &PingStats) -> String {
-        let output = format!(
-            "\n\n=== Network Comparison (Duration: {duration} seconds) ===
-
-BEFORE CHAOS (baseline of {iface}):
-  transmitted : {ct_tx}
-  received    : {ct_rx}
-  loss %      : {ct_loss}
-  rtt (ms)    : min {ct_min} | avg {ct_avg} | max {ct_max}
-
-DURING CHAOS ({iface}):
-  transmitted : {md_tx}
-  received    : {md_rx}
-  loss %      : {md_loss}
-  rtt (ms)    : min {md_min} | avg {md_avg} | max {md_max}
-",
-            ct_tx = control.transmitted,
-            ct_rx = control.received,
-            ct_loss = control.loss_pct,
-            ct_min = control.rtt_min,
-            ct_avg = control.rtt_avg,
-            ct_max = control.rtt_max,
-            md_tx = modified.transmitted,
-            md_rx = modified.received,
-            md_loss = modified.loss_pct,
-            md_min = modified.rtt_min,
-            md_avg = modified.rtt_avg,
-            md_max = modified.rtt_max,
-        );
-
-        println!("{}", output);
-        output
-    }
     /// Applies `tc netem` according to `plan.injectors.qdisc_netem`.
     ///
-    /// This method updates internal injector state so that [`NetworkConfig::revert`]
+    /// This method updates internal injector state so that [`QdiscNetem::revert`]
     /// can undo changes later.
     ///
     /// # Arguments
@@ -158,8 +84,8 @@ DURING CHAOS ({iface}):
     /// Callers should ensure the plan is valid (e.g., via [`validate_plan`]).
     pub fn apply(&mut self, plan: &Plan) -> Result<()> {
         let iface = plan.targets.iface.as_deref().unwrap();
-        let delay_ms = plan.injectors.network_config.delay_ms;
-        let loss_percent = plan.injectors.network_config.loss_percent;
+        let delay_ms = plan.injectors.qdisc_netem.delay_ms;
+        let loss_percent = plan.injectors.qdisc_netem.loss_percent;
 
         println!(
             "[qdisc] applying netem to {} (delay={}ms loss={}%)",
@@ -214,7 +140,7 @@ DURING CHAOS ({iface}):
     /// Failures are reported via printed messages.
     ///
     /// # Notes
-    /// `fq_codel` is used as a known baseline so [`NetworkConfig::revert`] can be deterministic.
+    /// `fq_codel` is used as a known baseline so [`QdiscNetem::revert`] can be deterministic.
     pub fn create_restore_root(iface: &str) {
         let status = Command::new("tc")
             .args(["qdisc", "replace", "dev", iface, "root", "fq_codel"])
@@ -297,8 +223,8 @@ DURING CHAOS ({iface}):
     ///
     /// # Side Effects
     /// If chaos was applied:
-    /// - Restores a baseline root qdisc via [`NetworkConfig::create_restore_root`].
-    /// - Prints verification output via [`NetworkConfig::show_qdisc_state`].
+    /// - Restores a baseline root qdisc via [`QdiscNetem::create_restore_root`].
+    /// - Prints verification output via [`QdiscNetem::show_qdisc_state`].
     /// - Clears internal state (`applied`, `iface`).
     ///
     /// # Requires
@@ -373,8 +299,6 @@ DURING CHAOS ({iface}):
             }
         }
     }
-
-
 }
 
 /// Runs the plan end-to-end (baseline → apply → hold → revert).
@@ -393,7 +317,7 @@ DURING CHAOS ({iface}):
 ///
 /// # Side Effects
 /// - Executes `ping` to collect baseline and chaos metrics.
-/// - Applies and reverts system-level chaos via [`NetworkConfig`].
+/// - Applies and reverts system-level chaos via [`QdiscNetem`].
 /// - Prints progress and a comparison report to stdout.
 ///
 /// # Requires
@@ -408,7 +332,14 @@ DURING CHAOS ({iface}):
 /// - Baseline or chaos ping stats cannot be collected.
 /// - Applying or reverting the qdisc fails.
 pub fn run_plan(plan: &Plan) -> Result<()> {
-
+    let netem = &plan.injectors.qdisc_netem;
+    let netem_is_noop = netem.delay_ms == 0 && netem.loss_percent == 0.0;
+    if netem_is_noop {
+        return Ok(());
+    }
+    if !plan.injectors.qdisc_netem.enabled {
+        return Ok(());
+    }
 
     //
     //  Hardcoded ping IP is unacceptable, needs to be moved to args & config
@@ -419,23 +350,48 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     let iface = plan.targets.iface.as_deref()
         .ok_or_else(|| anyhow!("targets.iface required for ping report"))?;
 
-    let base_args = NetworkConfig {
-        applied: false,
-        iface: Option::from(plan.targets.iface.clone().unwrap_or_default()), // see note below
+    let base_args = RunLikeArgs {
+        mode: RunMode::Inline(RunInlineArgs {
+            // required in inline mode
+            netem_enabled: true,
+            iface: plan.targets.iface.clone().unwrap_or_default(), // see note below
 
-        // schedule
-        duration_s: plan.schedule.duration_s,
+            // schedule
+            duration_s: plan.schedule.duration_s,
 
-        // targets
+            // targets
+            cgroup: plan.targets.cgroup.clone(),
 
-        // netem baseline
-        netem_delay_ms: 0,
-        netem_loss_percent: 0.0,
+            // netem baseline
+            netem_delay_ms: 0,
+            netem_loss_percent: 0.0,
 
-        };
+            // features
+            load_ebpf: false,
+
+            // cgroup injector baseline (disabled)
+            cgroup_knobs_enabled: false,
+            cgroup_pid: None,
+            cgroup_move_pid: true,
+            cgroup_enable: vec![],
+
+            cgroup_cpu_max: None,
+            cgroup_cpu_weight: None,
+            cgroup_mem_max: None,
+            cgroup_mem_high: None,
+            cgroup_swap_max: None,
+        }),
+    };
+    let base_plan = base_args.plan_from_args()?;
+
+    // 1) Run Baseline (Control)
+    // This needs to be
+    println!("Running baseline ping test (before chaos) for {} seconds...", base_plan.schedule.duration_s);
+	let control_stats = run_ping_test(&base_plan, ping_target)
+		.context("Failed to collect baseline ping stats")?;
 
     // 2) Apply qdisc
-    let mut qdisc = NetworkConfig::default();
+    let mut qdisc = QdiscNetem::default();
     qdisc.apply(plan)?;
 
     // 3) Run Chaos
@@ -448,162 +404,6 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 
     println!("\nRun complete.\n");
 
-    print_comparison(iface, plan.schedule.duration_s, &chaos_stats);
+    print_comparison(iface, plan.schedule.duration_s, &control_stats, &chaos_stats);
     Ok(())
-}
-
-
-/// Validates that a network interface exists on the host.
-///
-/// This function performs a lightweight check using
-/// `ip link show <iface>` to verify that the interface
-/// is present and accessible.
-///
-/// # Arguments
-/// * `iface` - Name of the network interface to validate.
-///
-/// # Returns
-/// Returns `Ok(())` if the interface exists.
-///
-/// # Side Effects
-/// Executes the system command:
-/// - `ip link show <iface>`
-///
-/// # Errors
-/// Returns an error if:
-/// - The `ip` command fails to execute, or
-/// - The interface does not exist.
-///
-/// # Requires
-/// The `ip` command must be available on the system.
-///
-
-pub fn validate_iface_exists(iface: &str) -> Result<()> {
-
-    // Check network interface exists (if provided)
-    // this needs to be moved to qdiscs.rs
-    // This was always printing to standard output.  I hated it.
-    let status = Command::new("ip")
-        .args(["link", "show", iface])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;    if !status.success() {
-        return Err(anyhow!("network interface not found: {}", iface));
-    }
-
-    Ok(())
-}
-/// Executes a ping test and parses packet statistics.
-///
-/// This function runs a timed ping using the interface defined
-/// in the provided [`Plan`] and extracts transmission, loss,
-/// and RTT metrics.
-///
-/// # Arguments
-/// * `plan` - Chaos plan containing target interface and duration.
-/// * `target` - Destination host or IP address to ping.
-///
-/// # Returns
-/// Returns `Some(PingStats)` if:
-/// - The ping command executes successfully, and
-/// - Output can be parsed correctly.
-///
-/// Returns `None` if:
-/// - The interface is not set in the plan,
-/// - The command fails,
-/// - Or parsing fails.
-///
-/// # Side Effects
-/// Executes:
-/// - `ping -I <iface> -w <duration> <target>`
-///
-/// # Notes
-/// RTT values are reported in milliseconds.
-/// Packet loss is a percentage in the range `0.0..=100.0`.
-pub fn run_ping_test(plan: &Plan, target: &str) -> Option<PingStats> {
-
-    let iface = plan.targets.iface
-        .as_deref()?;
-
-    let output = Command::new("ping")
-        .args([
-            "-I", iface,
-            "-w", &plan.schedule.duration_s.to_string(),
-            target
-        ])
-        .output()
-        .ok()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let mut transmitted = 0;
-    let mut received = 0;
-    let mut loss_pct = 0.0;
-    let mut rtt_min = 0.0;
-    let mut rtt_avg = 0.0;
-    let mut rtt_max = 0.0;
-
-    for line in stdout.lines() {
-        if line.contains("packets transmitted") {
-            let parts: Vec<&str> = line.split(',').collect();
-            transmitted = parts.get(0)?.trim().split(' ').next()?.parse().ok()?;
-            received = parts.get(1)?.trim().split(' ').next()?.parse().ok()?;
-            loss_pct = parts.get(2)?.trim().split('%').next()?.parse().ok()?;
-        }
-
-        if line.contains("rtt min/avg/max") {
-            let stats = line.split('=').nth(1)?.trim();
-            let nums: Vec<&str> = stats.split('/').collect();
-            rtt_min = nums.get(0)?.parse().ok()?;
-            rtt_avg = nums.get(1)?.parse().ok()?;
-            rtt_max = nums.get(2)?.parse().ok()?;
-        }
-    }
-
-    Some(PingStats {
-        transmitted,
-        received,
-        loss_pct,
-        rtt_min,
-        rtt_avg,
-        rtt_max,
-    })
-}
-pub fn print_comparison(iface: &str,
-                        duration: u64,
-                        //control: &PingStats,
-                        modified: &PingStats) -> String {
-    let output = format!(
-        "\n\n=== Network Comparison (Duration: {duration} seconds) ===
-
-DURING CHAOS ({iface}):
-  transmitted : {md_tx}
-  received    : {md_rx}
-  loss %      : {md_loss}
-  rtt (ms)    : min {md_min} | avg {md_avg} | max {md_max}
-// ",
-// Just hiding this little guy down here because this was implemented nasty as hell and I hate it
-        // this is what happens when you make no-value-added updates to the code and then merge them into main
-// BEFORE CHAOS (baseline of {iface}):
-//   transmitted : {ct_tx}
-//   received    : {ct_rx}
-//   loss %      : {ct_loss}
-//   rtt (ms)    : min {ct_min} | avg {ct_avg} | max {ct_max}
-
-//         ct_tx = control.transmitted,
-//         ct_rx = control.received,
-//         ct_loss = control.loss_pct,
-//         ct_min = control.rtt_min,
-//         ct_avg = control.rtt_avg,
-//         ct_max = control.rtt_max,
-        md_tx = modified.transmitted,
-        md_rx = modified.received,
-        md_loss = modified.loss_pct,
-        md_min = modified.rtt_min,
-        md_avg = modified.rtt_avg,
-        md_max = modified.rtt_max,
-    );
-
-    println!("{}", output);
-    output
 }
