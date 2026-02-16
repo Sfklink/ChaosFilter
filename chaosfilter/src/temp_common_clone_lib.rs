@@ -43,18 +43,7 @@ pub struct Features {
     pub load_ebpf: bool,
 }
 
-/// Injector configuration block.
-///
-/// Each field represents configuration for a specific chaos mechanism.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Injectors {
-    /// Traffic control (tc) netem injector configuration.
-    #[serde(default)]
-    pub qdisc_netem: QdiscNetem,
-    #[serde(default)]
-    pub cgroup_knobs: CgroupKnobs
-    //pub cgroup_memedit: CgroupMemEdit,
-}
+
 
 /// Configuration for the `tc netem` injector.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -258,7 +247,6 @@ impl RunLikeArgs {
     pub fn plan_from_args(self) -> Result<Plan> {
         match self.mode {
             RunMode::Config(a) => Plan::load_from_toml_file(a.config),
-            RunMode::Inline(a) => a.plan_from_inline(),
         }
     }
 }
@@ -425,83 +413,6 @@ pub fn validate_iface_exists(iface: &str) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Executes a ping test and parses packet statistics.
-///
-/// This function runs a timed ping using the interface defined
-/// in the provided [`Plan`] and extracts transmission, loss,
-/// and RTT metrics.
-///
-/// # Arguments
-/// * `plan` - Chaos plan containing target interface and duration.
-/// * `target` - Destination host or IP address to ping.
-///
-/// # Returns
-/// Returns `Some(PingStats)` if:
-/// - The ping command executes successfully, and
-/// - Output can be parsed correctly.
-///
-/// Returns `None` if:
-/// - The interface is not set in the plan,
-/// - The command fails,
-/// - Or parsing fails.
-///
-/// # Side Effects
-/// Executes:
-/// - `ping -I <iface> -w <duration> <target>`
-///
-/// # Notes
-/// RTT values are reported in milliseconds.
-/// Packet loss is a percentage in the range `0.0..=100.0`.
-pub fn run_ping_test(plan: &Plan, target: &str) -> Option<PingStats> {
-
-    let iface = plan.targets.iface
-        .as_deref()?;
-
-    let output = Command::new("ping")
-        .args([
-            "-I", iface,
-            "-w", &plan.schedule.duration_s.to_string(),
-            target
-        ])
-        .output()
-        .ok()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let mut transmitted = 0;
-    let mut received = 0;
-    let mut loss_pct = 0.0;
-    let mut rtt_min = 0.0;
-    let mut rtt_avg = 0.0;
-    let mut rtt_max = 0.0;
-
-    for line in stdout.lines() {
-        if line.contains("packets transmitted") {
-            let parts: Vec<&str> = line.split(',').collect();
-            transmitted = parts.get(0)?.trim().split(' ').next()?.parse().ok()?;
-            received = parts.get(1)?.trim().split(' ').next()?.parse().ok()?;
-            loss_pct = parts.get(2)?.trim().split('%').next()?.parse().ok()?;
-        }
-
-        if line.contains("rtt min/avg/max") {
-            let stats = line.split('=').nth(1)?.trim();
-            let nums: Vec<&str> = stats.split('/').collect();
-            rtt_min = nums.get(0)?.parse().ok()?;
-            rtt_avg = nums.get(1)?.parse().ok()?;
-            rtt_max = nums.get(2)?.parse().ok()?;
-        }
-    }
-
-    Some(PingStats {
-        transmitted,
-        received,
-        loss_pct,
-        rtt_min,
-        rtt_avg,
-        rtt_max,
-    })
 }
 
 /// Formats and prints a baseline vs. during-chaos comparison report.

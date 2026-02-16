@@ -4,15 +4,15 @@
 //! and can revert by restoring previous knob values (best effort).
 
 use anyhow::{anyhow, Context, Result};
-use chaosfilter_common::{validate_plan, Plan};
 use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
 };
+use crate::Plan;
 
 #[derive(Default)]
-pub struct PidCgroupKnobs {
+pub struct MemoryConfig {
     applied: bool,
 
     // what we operated on
@@ -27,78 +27,64 @@ pub struct PidCgroupKnobs {
     prev_mem_high: Option<String>,
     prev_swap_max: Option<String>,
 }
-
-pub fn run_plan(plan: &Plan) -> Result<()> {
-    if !plan.injectors.cgroup_knobs.enabled {
+pub fn validate_memory_config(plan: &Plan) -> Result<()> {
+    if !plan.injectors.memory_config.enabled {
         return Ok(());
     }
-    validate_plan(plan)?;
-    
-    let mut cg = PidCgroupKnobs::default();
-    cg.apply(plan)?;
 
-    std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
+    let pid = plan
+        .injectors
+        .memory_config
+        .pid
+        .ok_or_else(|| anyhow!("memory_config.enabled=true requires injectors.memory_config.pid"))?;
 
-    cg.revert()?;
-    Ok(())
-}
+    // quick pid existence check
+    if !Path::new(&format!("/proc/{pid}")).exists() {
+        return Err(anyhow!("PID does not exist: {pid}"));
+    }
 
-impl PidCgroupKnobs {
-    pub fn validate(plan: &Plan) -> Result<()> {
-        if !plan.injectors.cgroup_knobs.enabled {
-            return Ok(());
-        }
-
-        let pid = plan
-            .injectors
-            .cgroup_knobs
-            .pid
-            .ok_or_else(|| anyhow!("cgroup_knobs.enabled=true requires injectors.cgroup_knobs.pid"))?;
-
-        // quick pid existence check
-        if !Path::new(&format!("/proc/{pid}")).exists() {
-            return Err(anyhow!("PID does not exist: {pid}"));
-        }
-
-        // quick cgroup v2 check
-        if !Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
-            return Err(anyhow!(
+    // quick cgroup v2 check
+    if !Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
+        return Err(anyhow!(
                 "cgroup v2 not detected: /sys/fs/cgroup/cgroup.controllers missing"
             ));
-        }
+    }
 
-        // target cgroup required if enabled
-        let cg_rel = plan
-            .targets
-            .cgroup
-            .as_deref()
-            .ok_or_else(|| anyhow!("cgroup_knobs.enabled=true requires targets.cgroup"))?;
+    // target cgroup required if enabled
+    let cg_rel = plan
+        .targets
+        .cgroup
+        .as_deref()
+        .ok_or_else(|| anyhow!("memory_config.enabled=true requires targets.cgroup"))?;
 
-        let cg = resolve_cgroup_path(cg_rel);
+    let cg = resolve_cgroup_path(cg_rel);
 
-        // directory may not exist yet; that's fine (apply creates it)
-        // but parent must exist
-        let parent = cg
-            .parent()
-            .ok_or_else(|| anyhow!("invalid cgroup path (no parent): {}", cg.display()))?;
-        if !parent.exists() {
-            return Err(anyhow!(
+    // directory may not exist yet; that's fine (apply creates it)
+    // but parent must exist
+    let parent = cg
+        .parent()
+        .ok_or_else(|| anyhow!("invalid cgroup path (no parent): {}", cg.display()))?;
+    if !parent.exists() {
+        return Err(anyhow!(
                 "parent cgroup directory does not exist: {}",
                 parent.display()
             ));
-        }
-
-        Ok(())
     }
 
+    Ok(())
+}
+
+impl MemoryConfig {
+    
+
     pub fn apply(&mut self, plan: &Plan) -> Result<()> {
-        if !plan.injectors.cgroup_knobs.enabled {
+        if !plan.injectors.memory_config.enabled {
             return Ok(());
         }
 
-        Self::validate(plan)?;
+        validate_memory_config(plan)?;
 
-        let pid = plan.injectors.cgroup_knobs.pid.unwrap();
+        let pid = plan.injectors.memory_config.pid.unwrap();
         let cg_rel = plan.targets.cgroup.as_deref().unwrap();
         let cg = resolve_cgroup_path(cg_rel);
 
@@ -107,8 +93,8 @@ impl PidCgroupKnobs {
         ensure_cgroup_dir_exists(&cg).context("failed to create/ensure cgroup directory")?;
 
         // enable controllers on parent (best effort; fail is real because writing knobs may fail anyway)
-        if !plan.injectors.cgroup_knobs.enable.is_empty() {
-            enable_controllers_on_parent(&cg, &plan.injectors.cgroup_knobs.enable)
+        if !plan.injectors.memory_config.enable.is_empty() {
+            enable_controllers_on_parent(&cg, &plan.injectors.memory_config.enable)
                 .context("failed enabling controllers on parent cgroup.subtree_control")?;
         }
 
@@ -128,7 +114,7 @@ impl PidCgroupKnobs {
 
         // optionally move pid (idempotent)
         // that means it only does one thing one time instead of  repeating itself
-        if plan.injectors.cgroup_knobs.move_pid {
+        if plan.injectors.memory_config.move_pid {
             match read_pid_cgroup_v2(pid) {
                 Some(cur) if cur == cg => {
                     println!(
@@ -146,28 +132,28 @@ impl PidCgroupKnobs {
 
         // write knobs (only if present)
         println!("[DEBUG] [cgroup] writing cpu.max...");
-        if let Some(v) = plan.injectors.cgroup_knobs.cpu_max.as_deref() {
+        if let Some(v) = plan.injectors.memory_config.cpu_max.as_deref() {
             write_line(cg.join("cpu.max"), v)
                 .with_context(|| format!("failed writing cpu.max='{}' at {}", v, cg.display()))?;
         }
 
         println!("[DEBUG] [cgroup] writing cpu.weight...");
-        if let Some(w) = plan.injectors.cgroup_knobs.cpu_weight {
+        if let Some(w) = plan.injectors.memory_config.cpu_weight {
             write_line(cg.join("cpu.weight"), &w.to_string())?;
         }
 
         println!("[DEBUG] [cgroup] writing memory.max...");
-        if let Some(v) = plan.injectors.cgroup_knobs.mem_max.as_deref() {
+        if let Some(v) = plan.injectors.memory_config.mem_max.as_deref() {
             write_line(cg.join("memory.max"), v)?;
         }
         println!("[DEBUG] [cgroup] writing memory.high...");
 
-        if let Some(v) = plan.injectors.cgroup_knobs.mem_high.as_deref() {
+        if let Some(v) = plan.injectors.memory_config.mem_high.as_deref() {
             write_line(cg.join("memory.high"), v)?;
         }
         println!("[DEBUG] [cgroup] writing memory.swap.max...");
 
-        if let Some(v) = plan.injectors.cgroup_knobs.swap_max.as_deref() {
+        if let Some(v) = plan.injectors.memory_config.swap_max.as_deref() {
             write_line(cg.join("memory.swap.max"), v)?;
         }
 
@@ -198,7 +184,7 @@ impl PidCgroupKnobs {
 
         println!("[cgroup] reverting knobs on {} for PID {}", cg.display(), pid);
 
-        // restore knobs (best effort-ish: if file exists, try write)
+        // restore original (best effort-ish: if file exists, try write)
         restore_opt(cg.join("cpu.max"), self.prev_cpu_max.as_deref())?;
         restore_opt(cg.join("cpu.weight"), self.prev_cpu_weight.as_deref())?;
         restore_opt(cg.join("memory.max"), self.prev_mem_max.as_deref())?;
@@ -322,4 +308,22 @@ fn maybe_print(path: &Path, name: &str) {
         Ok(v) => println!("{name}: {}", v.trim()),
         Err(e) => println!("{name}: <unreadable: {e}>"),
     }
+}
+
+
+// confused as to this and apply()
+// requires fixing
+pub fn run_plan(plan: &Plan) -> Result<()> {
+    if !plan.injectors.memory_config.enabled {
+        return Ok(());
+    }
+    validate_memory_config(plan)?;
+
+    let mut cg = MemoryConfig::default();
+    cg.apply(plan)?;
+
+    std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
+
+    cg.revert()?;
+    Ok(())
 }
