@@ -4,13 +4,22 @@
 //! - Parsing CLI arguments via [`clap`]
 //! - Building a [`chaosfilter_common::Plan`] from a config file or inline flags
 //! - Dispatching to controller operations
+//!  WRONG.  But good idea, but WRONG.
 //!     - [`chaosfilter_common::validate_plan`]
 //!     - [`chaosfilter_controller::qdiscs::run_plan`]
 //!     - [`cli::run`]
 
+// Writing this here so I don't lose the thought, argument intake is handled here in cli.rs,
+// then we send those off to a dispatcher function.  All we do here is intake arguments.
+// We don't validate them to see if they play nice.  This is EXCLUSIVELY intake and plan generation.
+
+
+
 use anyhow::Result;
-use chaosfilter_common::RunLikeArgs;
 use clap::{Parser, Subcommand};
+use crate::controller::{pid_cgroup, qdiscs};
+use crate::{Plan, RunConfigArgs};
+use crate::controller::pid_cgroup::validate_memory_config;
 
 /// Top-level CLI argument structure.
 ///
@@ -22,14 +31,15 @@ use clap::{Parser, Subcommand};
 /// Delegates execution to one of the variants in [`Commands`].
 #[derive(Parser, Debug)]
 #[command(
-    name = "chaosfilter-cli", 
-    version, 
+    name = "chaosfilter-cli",
+    version,
     about = "ChaosFilter CLI & UI"
 )]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 }
+
 
 /// Available CLI subcommands.
 ///
@@ -43,12 +53,18 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Validate a chaos plan (from config or inline flags)
-    Validate(RunLikeArgs),
+    Validate(RunConfigArgs),
 
     /// Run the chaos plan (apply -> hold -> revert)
-    Chaos(RunLikeArgs),
+    Chaos(RunConfigArgs),
 }
+pub fn run_plan(plan: &Plan) -> Result<()> {
+    // Each module should early-return Ok(()) when its injector is disabled.
+    pid_cgroup::run_plan(plan)?;
+    qdiscs::run_plan(plan)?;
 
+    Ok(())
+}
 /// CLI entrypoint used by `main`.
 ///
 /// Parses CLI arguments into [`Cli`] and dispatches to the selected
@@ -87,7 +103,7 @@ pub enum Commands {
 /// - Any downstream controller operation fails.
 ///
 /// # Panics
-/// This function does not explicitly panic.  
+/// This function does not explicitly panic.
 /// Panics may propagate from lower-level modules if not handled.
 pub fn entry<I, T>(args: I) -> Result<()>
 where
@@ -98,14 +114,18 @@ where
 
     match cli.command {
         Commands::Validate(args) => {
-            let plan = args.plan_from_args()?;
-            chaosfilter_common::validate_plan(&plan)?;
+            let plan = Plan::load_from_toml_file(&args.config)?;
+            validate_memory_config(&plan)?;
+            // validate_iface_exists(&iface)?;
+            Ok(())
         }
+
         Commands::Chaos(args) => {
-            let plan = args.plan_from_args()?;
-            chaosfilter_controller::qdiscs::run_plan(&plan)?;
+            let plan = Plan::load_from_toml_file(&args.config)?;
+            run_plan(&plan)?;
+            Ok(())
         }
     }
-
-    Ok(())
 }
+
+

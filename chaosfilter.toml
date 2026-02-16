@@ -1,7 +1,7 @@
 name = "netem-test"
 
 [targets]
-iface = "enp5s0"
+iface = "enp34s0"
 
 [schedule]
 duration_s = 5
