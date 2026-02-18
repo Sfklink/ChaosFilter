@@ -5,7 +5,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use std::process::{Command, Stdio};
-use crate::{Plan, RunConfigArgs};
+use crate::cli::Plan;
 
 /// tc netem injector state.
 ///
@@ -418,21 +418,21 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 
     let iface = plan.targets.iface.as_deref()
         .ok_or_else(|| anyhow!("targets.iface required for ping report"))?;
-
-    let base_args = NetworkConfig {
-        applied: false,
-        iface: Option::from(plan.targets.iface.clone().unwrap_or_default()), // see note below
-
-        // schedule
-        duration_s: plan.schedule.duration_s,
-
-        // targets
-
-        // netem baseline
-        netem_delay_ms: 0,
-        netem_loss_percent: 0.0,
-
-        };
+    //
+    // let base_args = NetworkConfig {
+    //     applied: false,
+    //     iface: Option::from(plan.targets.iface.clone().unwrap_or_default()), // see note below
+    //
+    //     // schedule
+    //     duration_s: plan.schedule.duration_s,
+    //
+    //     // targets
+    //
+    //     // netem baseline
+    //     netem_delay_ms: 0,
+    //     netem_loss_percent: 0.0,
+    //
+    //     };
 
     // 2) Apply qdisc
     let mut qdisc = NetworkConfig::default();
