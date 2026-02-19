@@ -5,7 +5,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use std::process::{Command, Stdio};
-use crate::{Plan, RunConfigArgs};
+use crate::cli::Plan;
 
 /// tc netem injector state.
 ///
@@ -76,59 +76,6 @@ impl NetworkConfig {
         }
     }
 
-    /// Formats and prints a baseline vs. during-chaos comparison report.
-    ///
-    /// This function produces a human-readable comparison of ping
-    /// statistics collected before and during chaos execution.
-    ///
-    /// # Arguments
-    /// * `iface` - Network interface under test.
-    /// * `duration` - Duration of the chaos run (in seconds).
-    /// * `control` - Baseline [`PingStats`] collected before chaos.
-    /// * `modified` - [`PingStats`] collected during chaos.
-    ///
-    /// # Returns
-    /// Returns the formatted report string.
-    ///
-    /// # Side Effects
-    /// - Prints the formatted report to standard output.
-    ///
-    /// # Notes
-    /// This function does not perform validation. It assumes both
-    /// `control` and `modified` statistics are valid and comparable.
-    pub fn print_comparison(iface: &str, duration: u64, control: &PingStats, modified: &PingStats) -> String {
-        let output = format!(
-            "\n\n=== Network Comparison (Duration: {duration} seconds) ===
-
-BEFORE CHAOS (baseline of {iface}):
-  transmitted : {ct_tx}
-  received    : {ct_rx}
-  loss %      : {ct_loss}
-  rtt (ms)    : min {ct_min} | avg {ct_avg} | max {ct_max}
-
-DURING CHAOS ({iface}):
-  transmitted : {md_tx}
-  received    : {md_rx}
-  loss %      : {md_loss}
-  rtt (ms)    : min {md_min} | avg {md_avg} | max {md_max}
-",
-            ct_tx = control.transmitted,
-            ct_rx = control.received,
-            ct_loss = control.loss_pct,
-            ct_min = control.rtt_min,
-            ct_avg = control.rtt_avg,
-            ct_max = control.rtt_max,
-            md_tx = modified.transmitted,
-            md_rx = modified.received,
-            md_loss = modified.loss_pct,
-            md_min = modified.rtt_min,
-            md_avg = modified.rtt_avg,
-            md_max = modified.rtt_max,
-        );
-
-        println!("{}", output);
-        output
-    }
     /// Applies `tc netem` according to `plan.injectors.qdisc_netem`.
     ///
     /// This method updates internal injector state so that [`NetworkConfig::revert`]
@@ -418,21 +365,21 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 
     let iface = plan.targets.iface.as_deref()
         .ok_or_else(|| anyhow!("targets.iface required for ping report"))?;
-
-    let base_args = NetworkConfig {
-        applied: false,
-        iface: Option::from(plan.targets.iface.clone().unwrap_or_default()), // see note below
-
-        // schedule
-        duration_s: plan.schedule.duration_s,
-
-        // targets
-
-        // netem baseline
-        netem_delay_ms: 0,
-        netem_loss_percent: 0.0,
-
-        };
+    //
+    // let base_args = NetworkConfig {
+    //     applied: false,
+    //     iface: Option::from(plan.targets.iface.clone().unwrap_or_default()), // see note below
+    //
+    //     // schedule
+    //     duration_s: plan.schedule.duration_s,
+    //
+    //     // targets
+    //
+    //     // netem baseline
+    //     netem_delay_ms: 0,
+    //     netem_loss_percent: 0.0,
+    //
+    //     };
 
     // 2) Apply qdisc
     let mut qdisc = NetworkConfig::default();
@@ -478,21 +425,26 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 /// The `ip` command must be available on the system.
 ///
 
-pub fn validate_iface_exists(iface: &str) -> Result<()> {
 
-    // Check network interface exists (if provided)
-    // this needs to be moved to qdiscs.rs
-    // This was always printing to standard output.  I hated it.
+pub fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
+    let Some(iface) = iface else {
+        // iface not specified => nothing to validate here
+        return Ok(());
+    };
+
     let status = Command::new("ip")
         .args(["link", "show", iface])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()?;    if !status.success() {
+        .status()?;
+
+    if !status.success() {
         return Err(anyhow!("network interface not found: {}", iface));
     }
 
     Ok(())
 }
+
 /// Executes a ping test and parses packet statistics.
 ///
 /// This function runs a timed ping using the interface defined
