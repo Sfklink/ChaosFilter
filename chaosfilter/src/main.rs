@@ -63,8 +63,8 @@ where
         Commands::Validate(args) => {
             let plan = Plan::load_from_toml_file(&args.config)?;
             validate_memory_config(&plan)?;
-            //validate_iface_exists(&plan.targets.iface)?;
-             Ok(())
+            validate_iface_exists(plan.targets.iface.as_deref())?;
+            Ok(())
         }
 
         Commands::Chaos(args) => {
