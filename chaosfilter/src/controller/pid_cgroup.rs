@@ -76,8 +76,23 @@ pub fn validate_memory_config(plan: &Plan) -> Result<()> {
 }
 
 impl MemoryConfig {
-    
 
+
+
+
+ //ugly debuggers dont even look at it
+
+    fn assert_domain_cgroup(cg: &Path) -> Result<()> {
+        let ty = fs::read_to_string(cg.join("cgroup.type")).unwrap_or_default();
+        if ty.contains("threaded") {
+            return Err(anyhow!(
+            "target cgroup {} is threaded ('{}'); cannot move PID via cgroup.procs (need cgroup.threads / TIDs)",
+            cg.display(),
+            ty.trim()
+        ));
+        }
+        Ok(())
+    }
     pub fn apply(&mut self, plan: &Plan) -> Result<()> {
         if !plan.injectors.memory_config.enabled {
             return Ok(());
@@ -112,6 +127,9 @@ impl MemoryConfig {
         println!("[DEBUG] Revert state set");
 
 
+        // more troubleshooting
+        Self::assert_domain_cgroup(&cg)?;
+
 
         // optionally move pid (idempotent)
         // that means it only does one thing one time instead of  repeating itself
@@ -130,6 +148,19 @@ impl MemoryConfig {
             }
         }
 
+        // checking flag characters because it keeps throwing an error for bad input to syscalls
+        // IT WAS NEWLINES
+        // DAMMIT NEWLINES
+        // CURSE YOU NEWLINES
+        if let Some(v) = plan.injectors.memory_config.cpu_max.as_deref() {
+            eprintln!(
+                "[DEBUG] cpu.max raw='{:?}' bytes={:?}",
+                v,
+                v.as_bytes()
+            );
+            write_line(cg.join("cpu.max"), v)
+                .with_context(|| format!("failed writing cpu.max='{}' at {}", v, cg.display()))?;
+        }
 
         // write knobs (only if present)
         println!("[DEBUG] [cgroup] writing cpu.max...");
@@ -167,6 +198,11 @@ impl MemoryConfig {
         maybe_print(&cg.join("memory.max"), "  memory.max");
         maybe_print(&cg.join("memory.high"), "  memory.high");
         maybe_print(&cg.join("memory.swap.max"), "  memory.swap.max");
+
+        let dur = plan.schedule.duration_s;
+        println!("[cgroup] holding for {}s...", dur);
+        std::thread::sleep(std::time::Duration::from_secs(dur));
+        println!("[cgroup] duration elapsed; reverting...");
 
         Ok(())
     }
@@ -230,23 +266,31 @@ fn ensure_cgroup_dir_exists(cg: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-//new write_line that debugs better
+//new write_line that debugs EVEN MORE BETTER
+// so the last failure was due to appending newlines on to it which made cgroups SUPER TEMPERAMENTAL
+// SO NOW
+// IT WERKS
+// BECAUSE WE WERENT GIVING IT NEWLINES TO SCREECH ABOUT AND SAY,"
+// I DONT LIKE CHICKEN NUGGETS ARE DISGUSTING IF YOU DONT PUT THE KETCHUP ON IT IN SMALL DOTS
 fn write_line(path: impl AsRef<Path>, value: &str) -> std::io::Result<()> {
     use std::io::Write;
 
     let path = path.as_ref();
-
-    // cgroup fs can be picky: avoid append/truncate/create; write once with LF newline.
     let mut f = fs::OpenOptions::new().write(true).open(path)?;
 
-    let v = value.trim_end_matches('\r'); // prevent CRLF issues
-    write!(f, "{}\n", v)?;
+    // Be strict: cgroup expects exact tokens, no CRLF, no surrounding whitespace.
+    let v = value.trim();
 
-    // Ensure the write is pushed immediately
+    // One single write to avoid cgroupfs rejecting split writes.
+    let mut buf = Vec::with_capacity(v.len() + 1);
+    buf.extend_from_slice(v.as_bytes());
+    buf.push(b'\n');
+
+    f.write_all(&buf)?;
     f.flush()?;
-
     Ok(())
 }
+
 
 
 fn read_trimmed_opt(path: PathBuf) -> Option<String> {
@@ -285,9 +329,13 @@ fn enable_controllers_on_parent(cg: &Path, controllers: &[String]) -> std::io::R
 fn move_pid_into_cgroup(cg: &Path, pid: u32) -> std::io::Result<()> {
     let path = cg.join("cgroup.procs");
     let mut f = fs::OpenOptions::new().write(true).open(path)?;
-    write!(f, "{pid}\n")?;
+
+    let s = format!("{pid}\n");
+    f.write_all(s.as_bytes())?;
+    f.flush()?;
     Ok(())
 }
+
 
 /// Reads the cgroup v2 path for a PID and returns the absolute cgroup directory.
 /// For v2, /proc/<pid>/cgroup has a line like: `0::/some/path`
@@ -312,8 +360,8 @@ fn maybe_print(path: &Path, name: &str) {
 }
 
 
-// confused as to this and apply()
-// requires fixing
+// apply and revert
+// called from main
 pub fn run_plan(plan: &Plan) -> Result<()> {
     if !plan.injectors.memory_config.enabled {
         return Ok(());
@@ -328,3 +376,4 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     cg.revert()?;
     Ok(())
 }
+

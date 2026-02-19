@@ -9,22 +9,17 @@ name = "test-plan"
 
 # I do not like this.  It will change.
 # See below in [injectors.memory_config] for memory_config's pid selection.
-# iface needs to be moved into injectors.network_config
+# iface needs to be moved into injectors.network_config.
 [targets]
-
-# OPTIONAL cgroup file path name
-# this needs a set empty option
-cgroup = "meowmeowmeow"
 iface = "enp34s0"
-cgroup = "77500"
+cgroup = "77292"
 # Good, and we could add sequencing here for multiple config runs.
 [schedule]
-duration_s = 120
+duration_s = 20
 
 # This is the injector for qdiscs.rs
 [injectors.network_config]
 enabled = true
-target_iface = "enp34s0"
 delay_ms = 100
 loss_percent = 50.0
 
@@ -37,8 +32,8 @@ loss_percent = 50.0
 #This will return your PID for testing.
 
 [injectors.memory_config]
-enabled = false
-target_pid = 1234
+enabled = true
+pid = 77292
 move_pid = true
 enable = ["cpu", "memory"]
 cpu_max = "20000 100000"
