@@ -3,20 +3,20 @@
 //! Creates/uses a target cgroup, optionally moves a PID into it, writes cpu/memory knobs,
 //! and can revert by restoring previous knob values (best effort).
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
 };
-use crate::Plan;
+use crate::cli::Plan;
 
 #[derive(Default)]
 pub struct MemoryConfig {
     applied: bool,
 
     // what we operated on
-    pid: Option<i32>,
+    pid: Option<u32>,
     target_cg: Option<PathBuf>,
 
     // revert state
@@ -27,6 +27,7 @@ pub struct MemoryConfig {
     prev_mem_high: Option<String>,
     prev_swap_max: Option<String>,
 }
+
 pub fn validate_memory_config(plan: &Plan) -> Result<()> {
     if !plan.injectors.memory_config.enabled {
         return Ok(());
@@ -35,7 +36,7 @@ pub fn validate_memory_config(plan: &Plan) -> Result<()> {
     let pid = plan
         .injectors
         .memory_config
-        .pid
+        .target_pid
         .ok_or_else(|| anyhow!("memory_config.enabled=true requires injectors.memory_config.pid"))?;
 
     // quick pid existence check
@@ -99,7 +100,7 @@ impl MemoryConfig {
 
         validate_memory_config(plan)?;
 
-        let pid = plan.injectors.memory_config.pid.unwrap();
+        let pid = plan.injectors.memory_config.target_pid.unwrap();
         let cg_rel = plan.targets.cgroup.as_deref().unwrap();
         let cg = resolve_cgroup_path(cg_rel);
 
@@ -325,9 +326,7 @@ fn enable_controllers_on_parent(cg: &Path, controllers: &[String]) -> std::io::R
     Ok(())
 }
 
-fn move_pid_into_cgroup(cg: &Path, pid: i32) -> std::io::Result<()> {
-    use std::io::Write;
-
+fn move_pid_into_cgroup(cg: &Path, pid: u32) -> std::io::Result<()> {
     let path = cg.join("cgroup.procs");
     let mut f = fs::OpenOptions::new().write(true).open(path)?;
 
@@ -340,7 +339,7 @@ fn move_pid_into_cgroup(cg: &Path, pid: i32) -> std::io::Result<()> {
 
 /// Reads the cgroup v2 path for a PID and returns the absolute cgroup directory.
 /// For v2, /proc/<pid>/cgroup has a line like: `0::/some/path`
-fn read_pid_cgroup_v2(pid: i32) -> Option<PathBuf> {
+fn read_pid_cgroup_v2(pid: u32) -> Option<PathBuf> {
     let p = format!("/proc/{pid}/cgroup");
     let contents = fs::read_to_string(p).ok()?;
     for line in contents.lines() {
