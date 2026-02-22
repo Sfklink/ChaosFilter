@@ -393,8 +393,6 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     // 4) Remove qdisc
     qdisc.revert()?;
 
-    println!("\nRun complete.\n");
-
     print_comparison(iface, plan.schedule.duration_s, &chaos_stats);
     Ok(())
 }
@@ -526,14 +524,14 @@ pub fn print_comparison(iface: &str,
                         //control: &PingStats,
                         modified: &PingStats) -> String {
     let output = format!(
-        "\n\n=== Network Comparison (Duration: {duration} seconds) ===
+        "\n===== Network Comparison (Duration: {duration} seconds =====
 
 DURING CHAOS ({iface}):
   transmitted : {md_tx}
   received    : {md_rx}
   loss %      : {md_loss}
   rtt (ms)    : min {md_min} | avg {md_avg} | max {md_max}
-// ",
+",
 // Just hiding this little guy down here because this was implemented nasty as hell and I hate it
         // this is what happens when you make no-value-added updates to the code and then merge them into main
 // BEFORE CHAOS (baseline of {iface}):
