@@ -1,5 +1,5 @@
 use std::process;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use chaosfilter::cli::{Cli, Commands, Plan};
 use chaosfilter::controller::{pid_cgroup, qdiscs};
 use chaosfilter::controller::pid_cgroup::validate_memory_config;
