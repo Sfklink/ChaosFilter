@@ -2,25 +2,14 @@
 
 ---
 
-## Prerequisites
+## Requirements
 
-- Linux system with `tc` (iproute2)
-- Root privileges (for qdisc manipulation)
-- Rust toolchain:
-```bash
-rustup toolchain install stable
-```
-Note that editing the qdisc requires running commands at root.
 
 ## Usage
 To view usage:
 ```bash
 cargo run -- --help
 ```
-
-#### Note:
-The `--` is not required when running commands, but it does enable autocomplete w/ tab.
-
 ### Mode 1: Config File.
 
 Run from a pre-existing *.toml file.
@@ -55,55 +44,10 @@ Example (Run Config):
 cargo run -- chaos -c chaosfilter.toml
 ```
 
-### Mode 2: Inline flags. 
-
-Usage: 
-```bash
-chaosfilter chaos <COMMAND>
-
---iface <iface>
-Network interface to apply chaos to (required for inline mode)
-
---duration-ms <ms>
-Duration to hold chaos before revert (default: 5000)
-
---netem-enabled <bool>
-Enable/disable qdisc netem (default: true)
-
---netem-delay-ms <ms>
-Artificial latency in milliseconds
-
---netem-loss-percent <percent>
-Packet loss percentage (e.g. 0.2)
-
---cgroup <name>
-Optional cgroup (relative to /sys/fs/cgroup)
-(currently validated only; scoping via eBPF is future work)
-
---load-ebpf
-Enable eBPF loading (feature-gated, optional)
-```
-
 Example:
 ```bash
 cargo build
 sudo target/debug/chaosfilter_cli run --iface enp34s0 --duration-ms 5000 --netem-delay-ms 50 --netem-loss-percent 0.2
-```
-
-### Mode 3: Menu GUI
-
-```bash
-cargo run -- menu
-```
-
-Output:
-```bash
-What system would you like to test?
-1) Network Stack
-2) Disk I/O
-3) CPU / Scheduling
-4) Exit
->
 ```
 
 ---
@@ -144,6 +88,44 @@ cargo build
 target/debug/chaosfilter_cli run -c chaosfilter.toml
 ```
 
+
+## Development
+
+To add a new module in the controller directory (in this example, Storage), navigate to the Injector struct in cli.rs.
+
+```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Injectors {
+    #[serde(default)]
+    pub network_config: NetworkConfig,
+    #[serde(default)]
+    pub memory_config: MemoryConfig,
+    #[serde(default)]
+    pub storage_config: StorageConfig,
+}
+```
+
+
+
+and then create your ```StorageConfig``` struct in cli.rs.
+
+```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StorageConfig &#123;
+    pub enabled: bool,
+    pub targetdrive: Option<String>,
+    pub var1: u32,
+    pub var2: Option<String>,
+    pub var3: i32,
+    ...
+}
+```
+
+Once added, ```StorageConfig``` will be included in the ```Plan``` struct, and have access to its members.
+Ensure that ```use crate::cli::Plan``` is included in your module.
+
+To maintain a level of parity between modules, ensure that all domain-specific logic (Network, Cgroups, Storage) is
+self-contained within each module.  This will aid future developers in maintaining the software's architecture.
 ## Documentation
 
 To access documentation, run:
@@ -151,9 +133,13 @@ To access documentation, run:
 cargo doc --open
 ```
 
+
+
 ## Cross-compiling on macOS
 
 Cross compilation should work on both Intel and Apple Silicon Macs.
+I do not understand this section.  Why is this here?
+
 
 ```shell
 CC=${ARCH}-linux-musl-gcc cargo build --package chaosfilter --release \
@@ -162,27 +148,3 @@ CC=${ARCH}-linux-musl-gcc cargo build --package chaosfilter --release \
 ```
 The cross-compiled program `target/${ARCH}-unknown-linux-musl/release/chaosfilter` can be
 copied to a Linux server or VM and run there.
-
-## License
-
-With the exception of eBPF code, chaosfilter is distributed under the terms
-of either the [MIT license] or the [Apache License] (version 2.0), at your
-option.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in this crate by you, as defined in the Apache-2.0 license, shall
-be dual licensed as above, without any additional terms or conditions.
-
-### eBPF
-
-All eBPF code is distributed under either the terms of the
-[GNU General Public License, Version 2] or the [MIT license], at your
-option.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in this project by you, as defined in the GPL-2 license, shall be
-dual licensed as above, without any additional terms or conditions.
-
-[Apache license]: LICENSE-APACHE
-[MIT license]: LICENSE-MIT
-[GNU General Public License, Version 2]: LICENSE-GPL2
