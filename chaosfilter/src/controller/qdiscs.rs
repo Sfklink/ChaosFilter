@@ -386,6 +386,13 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     qdisc.apply(plan)?;
 
     // 3) Run Chaos
+    let dev = iface.to_string();
+    ctrlc::set_handler(move || {
+        eprintln!("\nCtrl-C: removing qdisc on {dev} and exiting...");
+        NetworkConfig::delete_root_qdisc(&dev);
+        std::process::exit(130);
+    })?;
+
     println!("Holding chaos for {} seconds.", plan.schedule.duration_s);
     let chaos_stats = run_ping_test(&plan, ping_target)
         .context("Failed to collect chaos ping stats")?;
@@ -421,9 +428,6 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 ///
 /// # Requires
 /// The `ip` command must be available on the system.
-///
-
-
 pub fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
     let Some(iface) = iface else {
         // iface not specified => nothing to validate here
