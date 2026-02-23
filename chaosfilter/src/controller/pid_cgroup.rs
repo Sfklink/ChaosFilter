@@ -3,13 +3,13 @@
 //! Creates/uses a target cgroup, optionally moves a PID into it, writes cpu/memory knobs,
 //! and can revert by restoring previous knob values (best effort).
 
-use anyhow::{anyhow, Context, Result};
+use crate::cli::Plan;
+use anyhow::{Context, Result, anyhow};
 use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
 };
-use crate::cli::Plan;
 
 #[derive(Default)]
 pub struct MemoryConfig {
@@ -33,11 +33,9 @@ pub fn validate_memory_config(plan: &Plan) -> Result<()> {
         return Ok(());
     }
 
-    let pid = plan
-        .injectors
-        .memory_config
-        .target_pid
-        .ok_or_else(|| anyhow!("memory_config.enabled=true requires injectors.memory_config.pid"))?;
+    let pid = plan.injectors.memory_config.target_pid.ok_or_else(|| {
+        anyhow!("memory_config.enabled=true requires injectors.memory_config.pid")
+    })?;
 
     // quick pid existence check
     if !Path::new(&format!("/proc/{pid}")).exists() {
@@ -47,8 +45,8 @@ pub fn validate_memory_config(plan: &Plan) -> Result<()> {
     // quick cgroup v2 check
     if !Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
         return Err(anyhow!(
-                "cgroup v2 not detected: /sys/fs/cgroup/cgroup.controllers missing"
-            ));
+            "cgroup v2 not detected: /sys/fs/cgroup/cgroup.controllers missing"
+        ));
     }
 
     // target cgroup required if enabled
@@ -67,29 +65,25 @@ pub fn validate_memory_config(plan: &Plan) -> Result<()> {
         .ok_or_else(|| anyhow!("invalid cgroup path (no parent): {}", cg.display()))?;
     if !parent.exists() {
         return Err(anyhow!(
-                "parent cgroup directory does not exist: {}",
-                parent.display()
-            ));
+            "parent cgroup directory does not exist: {}",
+            parent.display()
+        ));
     }
 
     Ok(())
 }
 
 impl MemoryConfig {
-
-
-
-
- //ugly debuggers dont even look at it
+    //ugly debuggers dont even look at it
 
     fn assert_domain_cgroup(cg: &Path) -> Result<()> {
         let ty = fs::read_to_string(cg.join("cgroup.type")).unwrap_or_default();
         if ty.contains("threaded") {
             return Err(anyhow!(
-            "target cgroup {} is threaded ('{}'); cannot move PID via cgroup.procs (need cgroup.threads / TIDs)",
-            cg.display(),
-            ty.trim()
-        ));
+                "target cgroup {} is threaded ('{}'); cannot move PID via cgroup.procs (need cgroup.threads / TIDs)",
+                cg.display(),
+                ty.trim()
+            ));
         }
         Ok(())
     }
@@ -104,7 +98,11 @@ impl MemoryConfig {
         let cg_rel = plan.targets.cgroup.as_deref().unwrap();
         let cg = resolve_cgroup_path(cg_rel);
 
-        println!("[cgroup] applying knobs to {} for PID {}", cg.display(), pid);
+        println!(
+            "[cgroup] applying knobs to {} for PID {}",
+            cg.display(),
+            pid
+        );
 
         ensure_cgroup_dir_exists(&cg).context("failed to create/ensure cgroup directory")?;
 
@@ -126,10 +124,8 @@ impl MemoryConfig {
         self.target_cg = Some(cg.clone());
         println!("[DEBUG] Revert state set");
 
-
         // more troubleshooting
         Self::assert_domain_cgroup(&cg)?;
-
 
         // optionally move pid (idempotent)
         // that means it only does one thing one time instead of  repeating itself
@@ -153,11 +149,7 @@ impl MemoryConfig {
         // DAMMIT NEWLINES
         // CURSE YOU NEWLINES
         if let Some(v) = plan.injectors.memory_config.cpu_max.as_deref() {
-            eprintln!(
-                "[DEBUG] cpu.max raw='{:?}' bytes={:?}",
-                v,
-                v.as_bytes()
-            );
+            eprintln!("[DEBUG] cpu.max raw='{:?}' bytes={:?}", v, v.as_bytes());
             write_line(cg.join("cpu.max"), v)
                 .with_context(|| format!("failed writing cpu.max='{}' at {}", v, cg.display()))?;
         }
@@ -213,13 +205,19 @@ impl MemoryConfig {
             return Ok(());
         }
 
-        let pid = self.pid.ok_or_else(|| anyhow!("internal error: pid missing"))?;
+        let pid = self
+            .pid
+            .ok_or_else(|| anyhow!("internal error: pid missing"))?;
         let cg = self
             .target_cg
             .clone()
             .ok_or_else(|| anyhow!("internal error: target_cg missing"))?;
 
-        println!("[cgroup] reverting knobs on {} for PID {}", cg.display(), pid);
+        println!(
+            "[cgroup] reverting knobs on {} for PID {}",
+            cg.display(),
+            pid
+        );
 
         // restore original (best effort-ish: if file exists, try write)
         restore_opt(cg.join("cpu.max"), self.prev_cpu_max.as_deref())?;
@@ -291,8 +289,6 @@ fn write_line(path: impl AsRef<Path>, value: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-
-
 fn read_trimmed_opt(path: PathBuf) -> Option<String> {
     let mut s = String::new();
     let mut f = fs::OpenOptions::new().read(true).open(&path).ok()?;
@@ -305,7 +301,7 @@ fn restore_opt(path: PathBuf, v: Option<&str>) -> Result<()> {
         return Ok(());
     }
     if let Some(val) = v {
-        write_line(path, val)?;   // converts std::io::Error -> anyhow::Error
+        write_line(path, val)?; // converts std::io::Error -> anyhow::Error
     }
     Ok(())
 }
@@ -336,7 +332,6 @@ fn move_pid_into_cgroup(cg: &Path, pid: u32) -> std::io::Result<()> {
     Ok(())
 }
 
-
 /// Reads the cgroup v2 path for a PID and returns the absolute cgroup directory.
 /// For v2, /proc/<pid>/cgroup has a line like: `0::/some/path`
 fn read_pid_cgroup_v2(pid: u32) -> Option<PathBuf> {
@@ -359,7 +354,6 @@ fn maybe_print(path: &Path, name: &str) {
     }
 }
 
-
 // apply and revert
 // called from main
 pub fn run_plan(plan: &Plan) -> Result<()> {
@@ -376,4 +370,3 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     cg.revert()?;
     Ok(())
 }
-
