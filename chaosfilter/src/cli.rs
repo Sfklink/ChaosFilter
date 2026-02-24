@@ -186,3 +186,129 @@ impl Plan {
         Ok(plan)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use clap::Parser;
+    use tempfile::NamedTempFile;
+    use std::io::Write;
+
+    #[test]
+    fn clap_parses_config() {
+        let toml = r#"
+            name = "test-config"
+
+            [targets]
+            iface = "enp5s0"
+            cgroup = "test-cgroup"
+
+            [schedule]
+            duration_s = 1
+
+            [injectors.network_config]
+            enabled = false
+
+            [injectors.memory_config]
+            enabled = false
+            "#;
+
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "{toml}").unwrap();
+        let filepath = file.path().to_str().unwrap();
+        
+        let cli = Cli::try_parse_from([
+            "chaosfilter",
+            "validate",
+            "--config",
+            filepath,
+        ]).unwrap();
+
+        match cli.command {
+            Commands::Validate(args) => assert_eq!(args.config, filepath),
+            _ => panic!("expected Validate command"),
+        }
+    }
+
+    #[test]
+    fn clap_rejects_config_missing_args() {
+        let err = Cli::try_parse_from([
+            "chaosfilter", "validate"
+        ]).unwrap_err().to_string();
+
+        assert!(err.contains("a value is required for") || err.contains("--config"))
+    }
+
+    #[test]
+    fn load_from_toml_ok_with_defaults() {
+        let toml = r#"
+            name = "test-config"
+
+            [targets]
+            iface = "enp5s0"
+            cgroup = "test-cgroup"
+
+            [schedule]
+            duration_s = 1
+            "#;
+
+        // Injectors were left out here to verify #[serde(default)]
+
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "{toml}").unwrap();
+
+        let plan = Plan::load_from_toml_file(file.path()).unwrap();
+
+        assert_eq!(plan.name, "test-config");
+        assert_eq!(plan.targets.cgroup.as_deref(), Some("test-cgroup"));
+        assert_eq!(plan.targets.iface.as_deref(), Some("enp5s0"));
+        assert_eq!(plan.schedule.duration_s, 1);
+
+        // Verify defaults
+        assert!(!plan.injectors.network_config.enabled);
+        assert!(!plan.injectors.memory_config.enabled);
+        assert_eq!(plan.injectors.memory_config.enable.len(), 0);
+    }
+
+    #[test]
+    fn load_from_toml_ok() {
+        let toml = r#"
+            name = "test-config"
+
+            [targets]
+            iface = "enp5s0"
+            cgroup = "test-cgroup"
+
+            [schedule]
+            duration_s = 1
+            
+            [injectors.network_config]
+            enabled = true
+
+            [injectors.memory_config]
+            enabled = true
+            "#;
+
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "{toml}").unwrap();
+
+        let plan = Plan::load_from_toml_file(file.path()).unwrap();
+
+        assert_eq!(plan.name, "test-config");
+        assert_eq!(plan.targets.cgroup.as_deref(), Some("test-cgroup"));
+        assert_eq!(plan.targets.iface.as_deref(), Some("enp5s0"));
+        assert_eq!(plan.schedule.duration_s, 1);
+        assert_eq!(plan.injectors.network_config.enabled, true);
+        assert_eq!(plan.injectors.memory_config.enabled, true);
+        assert_eq!(plan.injectors.memory_config.enable.len(), 0);
+    }
+
+    #[test]
+    fn load_from_toml_file_missing_file() {
+        let err = Plan::load_from_toml_file("/non-existent-folder")
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("failed to read config file:"))
+    }
+}

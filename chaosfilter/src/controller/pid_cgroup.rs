@@ -370,3 +370,236 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     cg.revert()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::cli::{Injectors, MemoryConfig as CliMemCfg, NetworkConfig as CliNetCfg, Plan, Schedule, Targets};
+    use super::*;
+    use tempfile::TempDir;
+
+    fn base_plan() -> Plan {
+        Plan {
+            name: "test".to_string(),
+            targets: Targets {
+                cgroup: None,
+                iface: None,
+            },
+            schedule: Schedule { duration_s: 0 },
+            injectors: Injectors {
+                network_config: CliNetCfg::default(),
+                memory_config: CliMemCfg::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn resolve_cgroup_path_absolute() {
+        let cgroup_path = resolve_cgroup_path("/tmp/test");
+        assert_eq!(cgroup_path, PathBuf::from("/tmp/test"));
+    }
+
+    #[test]
+    fn resolve_cgroup_path_relative() {
+        let p = resolve_cgroup_path("test");
+        assert_eq!(p, Path::new("/sys/fs/cgroup").join("test"));
+    }
+
+    #[test]
+    fn ensure_cgroup_dir_exists_test_create_if_missing() {
+        let tempdir = TempDir::new().unwrap();
+        let cgroup = tempdir.path().join("test");
+
+        assert!(!cgroup.exists());
+
+        ensure_cgroup_dir_exists(&cgroup).unwrap();
+        assert!(cgroup.exists());
+        assert!(cgroup.is_dir());
+    }
+
+    #[test]
+    fn write_line_test() {
+        let tempdir = TempDir::new().unwrap();
+        let filepath = tempdir.path().join("cpu.max");
+        fs::write(&filepath, "").unwrap();
+
+        write_line(&filepath, "  max 100000  \n").unwrap();
+
+        let read = fs::read_to_string(&filepath).unwrap();
+        assert_eq!(read, "max 100000\n");
+    }
+
+    #[test]
+    fn write_line_fails_if_file_missing() {
+        let tempdir = TempDir::new().unwrap();
+        let filepath = tempdir.path().join("does_not_exist");
+
+        let err = write_line(&filepath, "x").unwrap_err();
+        assert!(matches!(err.kind(), std::io::ErrorKind::NotFound));
+    }
+
+    #[test]
+    fn read_trimmed_opt_test() {
+        let tempdir = TempDir::new().unwrap();
+        let filepath = tempdir.path().join("does_not_exist");
+        assert!(read_trimmed_opt(filepath).is_none());
+    }
+
+    #[test]
+    fn restore_opt_noop_if_target_file_missing() {
+        let tempdir: TempDir = TempDir::new().unwrap();
+        let filepath = tempdir.path().join("does_not_exist");
+
+        restore_opt(filepath, Some("test")).unwrap();
+    }
+
+    #[test]
+    fn restore_opt_writes_when_present_and_value_some() {
+        let tempdir = TempDir::new().unwrap();
+        let filepath = tempdir.path().join("present");
+        fs::write(&filepath, "old\n").unwrap();
+
+        restore_opt(filepath.clone(), Some("new")).unwrap();
+        assert_eq!(fs::read_to_string(&filepath).unwrap(), "new\n");
+    }
+
+    #[test]
+    fn restore_opt_noop_when_value_none() {
+        let tempdir = TempDir::new().unwrap();
+        let filepath = tempdir.path().join("present");
+        fs::write(&filepath, "old\n").unwrap();
+
+        restore_opt(filepath.clone(), None).unwrap();
+        assert_eq!(fs::read_to_string(&filepath).unwrap(), "old\n");
+    }
+
+    #[test]
+    fn enable_controllers_on_parent_errors_when_no_parent() {
+        let err = enable_controllers_on_parent(
+            Path::new("/"), 
+            &["cpu".to_string()]
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn enable_controllers_on_parent_writes_plus_controller_lines() {
+        let tempdir = TempDir::new().unwrap();
+        let parent = tempdir.path().join("parent");
+        let cgroup = parent.join("child");
+        fs::create_dir_all(&cgroup).unwrap();
+
+        let subtree = parent.join("cgroup.subtree_control");
+        fs::write(&subtree, "").unwrap();
+
+        enable_controllers_on_parent(&cgroup, &["cpu".to_string(), "memory".to_string()]).unwrap();
+
+        let contents = fs::read_to_string(&subtree).unwrap();
+        assert!(contents.contains("+memory"));
+    }
+
+    #[test]
+    fn move_pid_into_cgroup_writes_pid_to_cgroup_procs_file() {
+        let tempdir = TempDir::new().unwrap();
+        let cgroup = tempdir.path().join("cg");
+        fs::create_dir_all(&cgroup).unwrap();
+
+        let procs = cgroup.join("cgroup.procs");
+        fs::write(&procs, "").unwrap();
+
+        move_pid_into_cgroup(&cgroup, 1234).unwrap();
+        assert_eq!(fs::read_to_string(&procs).unwrap(), "1234\n");
+    }
+
+    #[test]
+    fn read_pid_cgroup_v2_returns_some_for_current_pid_on_v2_hosts() {
+        let pid = std::process::id();
+        let cgroup = read_pid_cgroup_v2(pid);
+        assert!(cgroup.is_some());
+    }
+
+    #[test]
+    fn read_pid_cgroup_v2_returns_none_for_nonexistent_pid() {
+        let cgroup = read_pid_cgroup_v2(4_000_000_000u32);
+        assert!(cgroup.is_none());
+    }
+
+    #[test]
+    fn assert_domain_cgroup_ok_when_type_not_threaded() {
+        let tempdir = TempDir::new().unwrap();
+        let cgroup: PathBuf = tempdir.path().join("cg");
+        fs::create_dir_all(&cgroup).unwrap();
+        fs::write(cgroup.join("cgroup.type"), "domain\n").unwrap();
+
+        MemoryConfig::assert_domain_cgroup(&cgroup).unwrap();
+    }
+
+    #[test]
+    fn assert_domain_cgroup_errors_when_threaded() {
+        let tempdir = TempDir::new().unwrap();
+        let cgroup = tempdir.path().join("cg");
+        fs::create_dir_all(&cgroup).unwrap();
+        fs::write(cgroup.join("cgroup.type"), "threaded\n").unwrap();
+
+        let err = MemoryConfig::assert_domain_cgroup(&cgroup).unwrap_err().to_string();
+        assert!(err.contains("threaded"));
+        assert!(err.contains("cannot move PID"));
+    }
+
+    #[test]
+    fn validate_memory_config_ok_when_disabled() {
+        let plan = base_plan();
+        validate_memory_config(&plan).unwrap();
+    }
+
+    #[test]
+    fn validate_memory_config_errors_when_enabled_missing_pid() {
+        let mut plan = base_plan();
+        plan.injectors.memory_config.enabled = true;
+        plan.targets.cgroup = Some("testcg".to_string());
+
+        let err = validate_memory_config(&plan).unwrap_err().to_string();
+        assert!(err.contains("requires injectors.memory_config.pid"));
+    }
+
+    #[test]
+    fn validate_memory_config_errors_when_enabled_pid_missing_in_proc() {
+        let mut plan = base_plan();
+        plan.injectors.memory_config.enabled = true;
+        plan.injectors.memory_config.target_pid = Some(4_000_000_000u32);
+        plan.targets.cgroup = Some("testcg".to_string());
+
+        let err = validate_memory_config(&plan).unwrap_err().to_string();
+        assert!(err.contains("PID does not exist"));
+    }
+
+    #[test]
+    fn validate_memory_config_errors_when_enabled_missing_targets_cgroup() {
+        let mut plan = base_plan();
+        plan.injectors.memory_config.enabled = true;
+        plan.injectors.memory_config.target_pid = Some(std::process::id());
+
+        let err = validate_memory_config(&plan).unwrap_err().to_string();
+        assert!(err.contains("requires targets.cgroup"));
+    }
+
+    #[test]
+    fn validate_memory_config_errors_when_parent_cgroup_missing() {
+        let mut plan = base_plan();
+        plan.injectors.memory_config.enabled = true;
+        plan.injectors.memory_config.target_pid = Some(std::process::id());
+
+        plan.targets.cgroup = Some("does_not_exist/child".to_string());
+
+        let err = validate_memory_config(&plan).unwrap_err().to_string();
+        assert!(err.contains("parent cgroup directory does not exist"));
+    }
+
+    #[test]
+    fn maybe_print_does_not_panic_on_missing_file() {
+        // It prints <unreadable: ...>; just ensure it doesn't panic.
+        let tempdir = TempDir::new().unwrap();
+        maybe_print(&tempdir.path().join("does_not_exist"), "does_not_exist");
+    }
+}

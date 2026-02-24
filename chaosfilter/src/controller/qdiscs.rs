@@ -551,3 +551,63 @@ DURING CHAOS ({iface}):
     println!("{}", output);
     output
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_iface_exists_empty() {
+        validate_iface_exists(None).unwrap();
+    }
+
+    #[test]
+    fn validate_iface_exists_invalid() {
+        let err = validate_iface_exists(Some("test"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("network interface not found"));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn validate_iface_exists_success() {
+        std::process::Command::new("sh")
+            .args(["-c", "command -v ip >/dev/null 2>&1"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        
+        validate_iface_exists(Some("enp5s0")).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn validate_iface_exists_failure() {
+        std::process::Command::new("sh")
+            .args(["-c", "command -v ip >/dev/null 2>&1"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        
+        let err = validate_iface_exists(Some("test")).unwrap_err().to_string();
+        assert!(err.contains("network interface not found"))
+    }
+
+    #[test]
+    fn print_comparison_test() {
+        let ps = PingStats {
+            transmitted: 10,
+            received: 9,
+            loss_pct: 10.0,
+            rtt_min: 1.0,
+            rtt_avg: 2.0,
+            rtt_max: 3.0,
+        };
+
+        let out = print_comparison("enp5s0", 5, &ps);
+        assert!(out.contains("DURING CHAOS (enp5s0)"));
+        assert!(out.contains("transmitted"));
+        assert!(out.contains("loss"));
+    }
+}
