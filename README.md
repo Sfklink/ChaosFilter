@@ -2,6 +2,114 @@
 
 ---
 
+## Environment Setup
+Here is everything you need to do to go from a fresh Linux install to being able to run ChaosFilter.
+
+NOTE: Secure boot can interfere with some eBPF behavior. Disable if needed.
+
+### 1 System Packages
+Start by updating the system first:
+```bash
+sudo apt update
+sudo apt upgrade -y
+```
+
+These are all the system packages that are required:
+```bash
+sudo apt install -y \
+build-essential \
+clang \
+llvm \
+libelf-dev \
+zlib1g-dev \
+libclang-dev \
+linux-headers-$(uname -r) \
+pkg-config \
+bpftool \
+iproute2 \
+iptables \
+net-tools \
+curl 
+```
+
+### 2 Install Rust
+Install Rust with rustup:
+```bash
+curl https://sh.rustup.rs -sSf | sh
+```
+
+Select default installation (stable) then reload the shell and verify:
+```bash
+source $HOME/.cargo/env
+
+rustc --version
+cargo --version
+```
+
+### 3 Install BPF Targets for Rust
+Add the BPF compilation target:
+```bash
+rustup target add bpfel-unknown-none
+```
+
+If using Aya build scripts (recommended) also install:
+```bash
+cargo install cargo-generate
+```
+
+### 4 Verify the Kernel Supports eBPF
+Check BPF support you should see most BPF features marked as available:
+```bash
+bpftool feature
+```
+
+Check the cgroup version:
+```bash
+stat -fc %T /sys/fs/cgroup/
+```
+You should see:
+```bash
+cgroup2fs
+```
+
+### 5 Increase memlock Limit (Important for eBPF)
+There are 2 method to do this a temporary one and a permanent one. The recommendation will depend on your use-case. If you plan to use ChaosFilter across multiple session go with the permanent method. Otherwise use the temporary method
+
+For a temporary (current session only) increase:
+```bash
+ulimit -l unlimited
+```
+
+For a permanent increase:
+```bash
+sudo nano /etc/security/limits.conf
+```
+Add:
+```code
+soft memlock unlimited
+hard memlock unlimited
+```
+Then reboot and verify:
+```bash
+ulimit -l
+```
+You should see:
+```code
+unlimited
+```
+
+### 6 Verification of Working 'tc'
+Run:
+```bash
+tc qdisc show
+```
+You should see this or something similar:
+```code
+qdisc fq_codel 0: dev enpX root fercnt 2
+```
+
+---
+
 ## Usage
 To view usage:
 ```bash
