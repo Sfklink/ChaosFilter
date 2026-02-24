@@ -13,12 +13,11 @@
 // then we CAN send those off to a dispatcher function.  All we do here is intake arguments.
 // We don't validate them to see if they play nice.  This is EXCLUSIVELY intake and plan generation.
 
-use std::fs;
-use std::path::Path;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-
+use std::fs;
+use std::path::Path;
 
 /// Top-level CLI argument structure.
 ///
@@ -29,11 +28,7 @@ use serde::{Deserialize, Serialize};
 /// # Behavior
 /// Delegates execution to one of the variants in [`Commands`].
 #[derive(Parser, Debug)]
-#[command(
-    name = "chaosfilter-cli",
-    version,
-    about = "ChaosFilter CLI & UI"
-)]
+#[command(name = "chaosfilter-cli", version, about = "ChaosFilter CLI & UI")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -85,7 +80,6 @@ pub struct NetworkConfig {
     /// Packet loss percentage (`0.0`–`100.0`).
     #[serde(default)]
     pub loss_percent: f32,
-
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -115,7 +109,6 @@ pub struct MemoryConfig {
     pub mem_high: Option<String>,
     pub swap_max: Option<String>,
 }
-
 
 /// Target selection for chaos execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,7 +142,6 @@ pub struct RunConfigArgs {
     pub config: String,
 }
 
-
 /// Top-level chaos plan configuration.
 ///
 /// A `Plan` fully describes *what* chaos to run, *where* to run it,
@@ -170,7 +162,6 @@ pub struct Plan {
     #[serde(default)]
     pub injectors: Injectors,
 }
-
 
 impl Plan {
     /// Loads a [`Plan`] from a TOML configuration file.
@@ -195,5 +186,3 @@ impl Plan {
         Ok(plan)
     }
 }
-
-

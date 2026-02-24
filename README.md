@@ -2,147 +2,197 @@
 
 ---
 
-## Prerequisites
+## Environment Setup
+Here is everything you need to do to go from a fresh Linux install to being able to run ChaosFilter.
 
-- Linux system with `tc` (iproute2)
-- Root privileges (for qdisc manipulation)
-- Rust toolchain:
+NOTE: Secure boot can interfere with some eBPF behavior. Disable if needed.
+
+### 1 System Packages
+Start by updating the system first:
 ```bash
-rustup toolchain install stable
+sudo apt update
+sudo apt upgrade -y
 ```
-Note that editing the qdisc requires running commands at root.
+
+These are all the system packages that are required:
+```bash
+sudo apt install -y \
+build-essential \
+clang \
+llvm \
+libelf-dev \
+zlib1g-dev \
+libclang-dev \
+linux-headers-$(uname -r) \
+pkg-config \
+bpftool \
+iproute2 \
+iptables \
+net-tools \
+curl 
+```
+
+### 2 Install Rust
+Install Rust with rustup:
+```bash
+curl https://sh.rustup.rs -sSf | sh
+```
+
+Select default installation (stable) then reload the shell and verify:
+```bash
+source $HOME/.cargo/env
+
+rustc --version
+cargo --version
+```
+
+### 3 Install BPF Targets for Rust
+Add the BPF compilation target:
+```bash
+rustup target add bpfel-unknown-none
+```
+
+If using Aya build scripts (recommended) also install:
+```bash
+cargo install cargo-generate
+```
+
+### 4 Verify the Kernel Supports eBPF
+Check BPF support you should see most BPF features marked as available:
+```bash
+bpftool feature
+```
+
+Check the cgroup version:
+```bash
+stat -fc %T /sys/fs/cgroup/
+```
+You should see:
+```bash
+cgroup2fs
+```
+
+### 5 Increase memlock Limit (Important for eBPF)
+There are 2 method to do this a temporary one and a permanent one. The recommendation will depend on your use-case. If you plan to use ChaosFilter across multiple session go with the permanent method. Otherwise use the temporary method
+
+For a temporary (current session only) increase:
+```bash
+ulimit -l unlimited
+```
+
+For a permanent increase:
+```bash
+sudo nano /etc/security/limits.conf
+```
+Add:
+```code
+soft memlock unlimited
+hard memlock unlimited
+```
+Then reboot and verify:
+```bash
+ulimit -l
+```
+You should see:
+```code
+unlimited
+```
+
+### 6 Verification of Working 'tc'
+Run:
+```bash
+tc qdisc show
+```
+You should see this or something similar:
+```code
+qdisc fq_codel 0: dev enpX root fercnt 2
+```
+
+---
 
 ## Usage
 To view usage:
 ```bash
+cargo build
 cargo run -- --help
 ```
 
-#### Note:
-The `--` is not required when running commands, but it does enable autocomplete w/ tab.
+How to run from a pre-existing *.toml file.
 
-### Mode 1: Config File.
-
-Run from a pre-existing *.toml file.
-
-Example (Validate config):
+Example (Build & Validate with config):
 ```bash
-cargo run -- validate -c chaosfilter.toml
+cargo build
+cargo run -- validate -c, --config <path-to-toml-file>
 ```
 
+Example Toml Config File:
 `chaosfilter.toml`:
 ```toml
 name = "netem-test"
 
 [targets]
-cgroup = "system.slice"
-iface = "enp34s0"
+iface = "enp5s0"
+cgroup = "77500" # Optional
 
 [schedule]
-duration_s = 20
+duration_s = 10
 
-[features]
-load_ebpf = false
-
-[injectors.qdisc_netem]
+[injectors.network_config]
 enabled = true
+target_iface = "enp5s0"
 delay_ms = 100
-loss_percent = 50
+loss_percent = 50.0
+
+[injectors.memory_config]
+enabled = false
+target_pid = 1234
+move_pid = true
+enable = ["cpu", "memory"]
+cpu_max = "20000 100000"
+mem_max = "1G"
 ```
 
-Example (Run Config):
-```bash
-cargo run -- chaos -c chaosfilter.toml
-```
-
-### Mode 2: Inline flags. 
-
-Usage: 
-```bash
-chaosfilter chaos <COMMAND>
-
---iface <iface>
-Network interface to apply chaos to (required for inline mode)
-
---duration-ms <ms>
-Duration to hold chaos before revert (default: 5000)
-
---netem-enabled <bool>
-Enable/disable qdisc netem (default: true)
-
---netem-delay-ms <ms>
-Artificial latency in milliseconds
-
---netem-loss-percent <percent>
-Packet loss percentage (e.g. 0.2)
-
---cgroup <name>
-Optional cgroup (relative to /sys/fs/cgroup)
-(currently validated only; scoping via eBPF is future work)
-
---load-ebpf
-Enable eBPF loading (feature-gated, optional)
-```
-
-Example:
+Example (Build & Run with Config):
 ```bash
 cargo build
-sudo target/debug/chaosfilter_cli run --iface enp34s0 --duration-ms 5000 --netem-delay-ms 50 --netem-loss-percent 0.2
-```
-
-### Mode 3: Menu GUI
-
-```bash
-cargo run -- menu
-```
-
-Output:
-```bash
-What system would you like to test?
-1) Network Stack
-2) Disk I/O
-3) CPU / Scheduling
-4) Exit
->
+cargo run -- chaos -c, --config chaosfilter.toml
 ```
 
 ---
 
-## Build & Run
+## Development
 
-If you are using mode 1, use `cargo build`, `cargo check`, `cargo run`, etc. as normal. Build and run your program with:
-```shell
-cargo build
-cargo run -- <args>
+To add a new module in the controller directory (in this example, Storage), navigate to the Injector struct in cli.rs.
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Injectors {
+    #[serde(default)]
+    pub network_config: NetworkConfig,
+    #[serde(default)]
+    pub memory_config: MemoryConfig,
+    #[serde(default)]
+    pub storage_config: StorageConfig,
+}
 ```
 
-Example:
-```shell
-cargo build
-cargo run -- chaos --cgroup system.slice/sshd.service --iface enp5s0 --latency 300ms --loss 10% --duration 20s
+and then create your `StorageConfig` struct in cli.rs.
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StorageConfig {
+    pub enabled: bool,
+    pub targetdrive: Option<String>,
+    pub var1: u32,
+    pub var2: Option<String>,
+    pub var3: i32,
+    ...
+}
 ```
 
-If a cgroup is not readily available, you can create one yourself named `chaos-test`:
-```shell
-systemd-run --user --scope -p "Delegate=yes" --unit=chaos-test bash
-```
+Once added, `StorageConfig` will be included in the `Plan` struct, and have access to its members. Ensure that `use crate::cli::Plan` is included in your module.
 
-Verify with the following:
-```shell
-cat /proc/self/cgroup
-ping -c 3 8.8.8.8
-```
-
-and use it in chaos filter run by doing:
-```shell
-chaosfilter run --cgroup chaos-test <args>
-```
-
-Program can also be pointed a .toml file to act as config, eg.:
-```bash
-cargo build
-target/debug/chaosfilter_cli run -c chaosfilter.toml
-```
+To maintain a level of parity between modules, ensure that all domain-specific logic (Network, Cgroups, Storage) is self-contained within each module.  This will aid future developers in maintaining the software's architecture.
 
 ## Documentation
 
@@ -150,39 +200,3 @@ To access documentation, run:
 ```bash
 cargo doc --open
 ```
-
-## Cross-compiling on macOS
-
-Cross compilation should work on both Intel and Apple Silicon Macs.
-
-```shell
-CC=${ARCH}-linux-musl-gcc cargo build --package chaosfilter --release \
-  --target=${ARCH}-unknown-linux-musl \
-  --config=target.${ARCH}-unknown-linux-musl.linker=\"${ARCH}-linux-musl-gcc\"
-```
-The cross-compiled program `target/${ARCH}-unknown-linux-musl/release/chaosfilter` can be
-copied to a Linux server or VM and run there.
-
-## License
-
-With the exception of eBPF code, chaosfilter is distributed under the terms
-of either the [MIT license] or the [Apache License] (version 2.0), at your
-option.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in this crate by you, as defined in the Apache-2.0 license, shall
-be dual licensed as above, without any additional terms or conditions.
-
-### eBPF
-
-All eBPF code is distributed under either the terms of the
-[GNU General Public License, Version 2] or the [MIT license], at your
-option.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in this project by you, as defined in the GPL-2 license, shall be
-dual licensed as above, without any additional terms or conditions.
-
-[Apache license]: LICENSE-APACHE
-[MIT license]: LICENSE-MIT
-[GNU General Public License, Version 2]: LICENSE-GPL2

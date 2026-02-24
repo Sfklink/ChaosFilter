@@ -1,9 +1,9 @@
-use std::process;
-use clap::{Parser, Subcommand};
 use chaosfilter::cli::{Cli, Commands, Plan};
-use chaosfilter::controller::{pid_cgroup, qdiscs};
 use chaosfilter::controller::pid_cgroup::validate_memory_config;
 use chaosfilter::controller::qdiscs::validate_iface_exists;
+use chaosfilter::controller::{pid_cgroup, qdiscs};
+use clap::Parser;
+use std::process;
 
 fn main() {
     if let Err(e) = entry(std::env::args_os()) {
@@ -64,18 +64,20 @@ where
             let plan = Plan::load_from_toml_file(&args.config)?;
             validate_memory_config(&plan)?;
             validate_iface_exists(plan.targets.iface.as_deref())?;
+
+            println!("\nConfig OK.");
             Ok(())
         }
 
         Commands::Chaos(args) => {
             let plan = Plan::load_from_toml_file(&args.config)?;
             run_plan(&plan)?;
+
+            println!("\nChaos Plan Complete.");
             Ok(())
         }
     }
 }
-
-
 
 pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
     // Each module should early-return Ok(()) when its injector is disabled.

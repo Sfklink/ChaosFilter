@@ -3,9 +3,9 @@
 //! Applies a root `netem` qdisc to the configured network interface and restores
 //! a known-good baseline on revert.
 
-use anyhow::{anyhow, Context, Result};
-use std::process::{Command, Stdio};
 use crate::cli::Plan;
+use anyhow::{Context, Result, anyhow};
+use std::process::{Command, Stdio};
 
 /// tc netem injector state.
 ///
@@ -60,8 +60,6 @@ impl NetworkConfig {
     /// # Panics
     /// This function does not explicitly panic.
     ///
-
-
 
     pub fn show_qdisc_state(iface: &str) {
         match Command::new("tc")
@@ -118,12 +116,7 @@ impl NetworkConfig {
 
         let status = Command::new("tc")
             .args([
-                "qdisc", "replace",
-                "dev", iface,
-                "root",
-                "netem",
-                "delay", &delay,
-                "loss", &loss,
+                "qdisc", "replace", "dev", iface, "root", "netem", "delay", &delay, "loss", &loss,
             ])
             .status()
             .context("failed to execute tc (apply)")?;
@@ -209,12 +202,7 @@ impl NetworkConfig {
 
         let status = Command::new("tc")
             .args([
-                "qdisc", "replace",
-                "dev", iface,
-                "root",
-                "netem",
-                "delay", &delay,
-                "loss", &loss,
+                "qdisc", "replace", "dev", iface, "root", "netem", "delay", &delay, "loss", &loss,
             ])
             .status()
             .context("failed to execute tc (apply)")?;
@@ -265,7 +253,6 @@ impl NetworkConfig {
 
         let iface = self.iface.as_deref().unwrap();
 
-
         // Deterministic revert: restore the known-good root qdisc.
         Self::create_restore_root(iface);
 
@@ -313,15 +300,16 @@ impl NetworkConfig {
                 println!("Root qdisc deleted successfully from '{}'", iface);
             }
             Ok(_) => {
-                println!("ERROR: failed to delete root qdisc from '{}' (there may not be one)", iface);
+                println!(
+                    "ERROR: failed to delete root qdisc from '{}' (there may not be one)",
+                    iface
+                );
             }
             Err(e) => {
                 println!("ERROR: failed to execute tc: {}", e);
             }
         }
     }
-
-
 }
 
 /// Runs the plan end-to-end (baseline → apply → hold → revert).
@@ -355,15 +343,16 @@ impl NetworkConfig {
 /// - Baseline or chaos ping stats cannot be collected.
 /// - Applying or reverting the qdisc fails.
 pub fn run_plan(plan: &Plan) -> Result<()> {
-
-
     //
     //  Hardcoded ping IP is unacceptable, needs to be moved to args & config
     //
 
     let ping_target = "8.8.8.8";
 
-    let iface = plan.targets.iface.as_deref()
+    let iface = plan
+        .targets
+        .iface
+        .as_deref()
         .ok_or_else(|| anyhow!("targets.iface required for ping report"))?;
     //
     // let base_args = NetworkConfig {
@@ -386,19 +375,23 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     qdisc.apply(plan)?;
 
     // 3) Run Chaos
+    let dev = iface.to_string();
+    ctrlc::set_handler(move || {
+        eprintln!("\nCtrl-C: removing qdisc on {dev} and exiting...");
+        NetworkConfig::delete_root_qdisc(&dev);
+        std::process::exit(130);
+    })?;
+
     println!("Holding chaos for {} seconds.", plan.schedule.duration_s);
-    let chaos_stats = run_ping_test(&plan, ping_target)
-        .context("Failed to collect chaos ping stats")?;
+    let chaos_stats =
+        run_ping_test(&plan, ping_target).context("Failed to collect chaos ping stats")?;
 
     // 4) Remove qdisc
     qdisc.revert()?;
 
-    println!("\nRun complete.\n");
-
     print_comparison(iface, plan.schedule.duration_s, &chaos_stats);
     Ok(())
 }
-
 
 /// Validates that a network interface exists on the host.
 ///
@@ -423,9 +416,6 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 ///
 /// # Requires
 /// The `ip` command must be available on the system.
-///
-
-
 pub fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
     let Some(iface) = iface else {
         // iface not specified => nothing to validate here
@@ -473,15 +463,15 @@ pub fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
 /// RTT values are reported in milliseconds.
 /// Packet loss is a percentage in the range `0.0..=100.0`.
 pub fn run_ping_test(plan: &Plan, target: &str) -> Option<PingStats> {
-
-    let iface = plan.targets.iface
-        .as_deref()?;
+    let iface = plan.targets.iface.as_deref()?;
 
     let output = Command::new("ping")
         .args([
-            "-I", iface,
-            "-w", &plan.schedule.duration_s.to_string(),
-            target
+            "-I",
+            iface,
+            "-w",
+            &plan.schedule.duration_s.to_string(),
+            target,
         ])
         .output()
         .ok()?;
@@ -521,33 +511,35 @@ pub fn run_ping_test(plan: &Plan, target: &str) -> Option<PingStats> {
         rtt_max,
     })
 }
-pub fn print_comparison(iface: &str,
-                        duration: u64,
-                        //control: &PingStats,
-                        modified: &PingStats) -> String {
+pub fn print_comparison(
+    iface: &str,
+    duration: u64,
+    //control: &PingStats,
+    modified: &PingStats,
+) -> String {
     let output = format!(
-        "\n\n=== Network Comparison (Duration: {duration} seconds) ===
+        "\n===== Network Comparison (Duration: {duration} seconds =====
 
 DURING CHAOS ({iface}):
   transmitted : {md_tx}
   received    : {md_rx}
   loss %      : {md_loss}
   rtt (ms)    : min {md_min} | avg {md_avg} | max {md_max}
-// ",
-// Just hiding this little guy down here because this was implemented nasty as hell and I hate it
+",
+        // Just hiding this little guy down here because this was implemented nasty as hell and I hate it
         // this is what happens when you make no-value-added updates to the code and then merge them into main
-// BEFORE CHAOS (baseline of {iface}):
-//   transmitted : {ct_tx}
-//   received    : {ct_rx}
-//   loss %      : {ct_loss}
-//   rtt (ms)    : min {ct_min} | avg {ct_avg} | max {ct_max}
+        // BEFORE CHAOS (baseline of {iface}):
+        //   transmitted : {ct_tx}
+        //   received    : {ct_rx}
+        //   loss %      : {ct_loss}
+        //   rtt (ms)    : min {ct_min} | avg {ct_avg} | max {ct_max}
 
-//         ct_tx = control.transmitted,
-//         ct_rx = control.received,
-//         ct_loss = control.loss_pct,
-//         ct_min = control.rtt_min,
-//         ct_avg = control.rtt_avg,
-//         ct_max = control.rtt_max,
+        //         ct_tx = control.transmitted,
+        //         ct_rx = control.received,
+        //         ct_loss = control.loss_pct,
+        //         ct_min = control.rtt_min,
+        //         ct_avg = control.rtt_avg,
+        //         ct_max = control.rtt_max,
         md_tx = modified.transmitted,
         md_rx = modified.received,
         md_loss = modified.loss_pct,
