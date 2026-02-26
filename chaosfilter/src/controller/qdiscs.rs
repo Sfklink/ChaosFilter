@@ -554,6 +554,27 @@ DURING CHAOS ({iface}):
 
 #[cfg(test)]
 mod tests {
+    fn get_default_iface() -> Option<String> {
+        let output = std::process::Command::new("ip")
+            .args(["route", "get", "8.8.8.8"])
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Look for: "dev <iface>"
+        stdout
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .windows(2)
+            .find(|w| w[0] == "dev")
+            .map(|w| w[1].to_string())
+    }
+
     use super::*;
 
     #[test]
@@ -569,16 +590,29 @@ mod tests {
         assert!(err.contains("network interface not found"));
     }
 
+
     #[test]
     #[cfg(target_os = "linux")]
     fn validate_iface_exists_success() {
-        std::process::Command::new("sh")
+
+        // there does exist the change of ip not being available, which can happen
+        // in the case that we are not running as root
+
+        let ip_exists = std::process::Command::new("sh")
             .args(["-c", "command -v ip >/dev/null 2>&1"])
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
-        
-        validate_iface_exists(Some("enp5s0")).unwrap();
+
+        if !ip_exists {
+            eprintln!("Skipping test: `ip` not installed");
+            return;
+        }
+
+        let iface = get_default_iface()
+            .expect("Could not determine default interface");
+
+        validate_iface_exists(Some(&iface)).unwrap();
     }
 
     #[test]
