@@ -45,3 +45,12 @@ cpu_max = "20000 100000"
 # the kernel may invoke the OOM killer to terminate processes. Units such as
 # K, M, and G are supported
 mem_max = "1G"
+# Soft memory limit threshold. When memory usage exceeds this value, the kernel
+# will apply memory pressure and throttle allocations instead of immediately
+# killing processes. This provided a gradual degredation model. Useful for 
+# testing how applications respond to memory stress.
+mem_high = "800M"
+# Maximum swap usage allowed. Controls how much swap space the cgroup may use
+# after RAM is exhausted. Setting this to "0" disables swap completely. 
+# Setting itto "max" allows unlimited swap usage.
+swap_max= "0"
