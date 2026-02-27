@@ -19,9 +19,29 @@ delay_ms = 100
 loss_percent = 50.0
 
 [injectors.memory_config]
+# Master enable flag for the memory injector
+# When set to true, the injector will actively apply CPU and memory contraints
+# defined below. If set to false, this entire configuration block is ignored at
+# runtime, allowing you to keep settings defined without enforcing them.
 enabled = false
+# The process ID (pid) that resource limits will be applied to. This tells the
+# injector which running process should be moved into the configured cgroup and
+# constrained. If the PID does not exist or is not accesible, the injector will
+# fail to apply limits.
 target_pid = 1234
+# Controls whether the specified PID should be moved into the target cgroup
+# before applying new limits. This ensures the process becomes subject to the
+# configured CPU and memory restrictions. If set to false, limits will only apply
+# if the process is already inside the target cgroup
 move_pid = true
+# List of cgroup v2 controllers to enable in the parent cgroup.subtree_control
+# file. Controllers must be enabled before resource limit files (like cpu.max
+# or memory.max) become available in the child cgroup. Common values are "cpu"
+# and "memory"
 enable = ["cpu", "memory"]
 cpu_max = "20000 100000"
+# Hard memory limit for the cgroup. This defines the maximum amount of memory
+# processes in this cgroup are allowed to allocate. If the limit is exceeded,
+# the kernel may invoke the OOM killer to terminate processes. Units such as
+# K, M, and G are supported
 mem_max = "1G"
