@@ -20,7 +20,7 @@ loss_percent = 50.0
 
 [injectors.memory_config]
 # Master enable flag for the memory injector
-# When set to true, the injector will actively apply CPU and memory contraints
+# When set to true, the injector will actively apply CPU and memory constraints
 # defined below. If set to false, this entire configuration block is ignored at
 # runtime, allowing you to keep settings defined without enforcing them.
 enabled = false
@@ -55,3 +55,26 @@ mem_high = "800M"
 # after RAM is exhausted. Setting this to "0" disables swap completely. 
 # Setting itto "max" allows unlimited swap usage.
 swap_max= "0"
+
+# Block I/O Injector
+[injectors.block_config]
+# The master enable flag for storage injection.  When set to true, the injector 
+# will activly apply Block I/O constraints based on the vaules for the variables 
+# below. If set to false, this whole section of the configuration file is ignored 
+# at runtime. This allows the user to 'cherry-pick' which section(s) they want to use.
+enabled = true
+# The target device that the I/O constraints will be applied to. This needs to be a 
+# valid device path based on the device type you are targeting e.g. "/dev/sda", 
+# "/dev/nvme01", or "/dev/loop0". It is a placeholder value at the moment but will
+# be updated accordingly when implementation is integrated
+device = "/dev/placeholder"
+# Read bandwidth limit (bytes per second). This value restricts the maximum sustained
+# read throughput for the defined device in the configured cgroup. It must be specified
+# in raw bytes per second e.g. 1048576 would be 1 MB/s and 10485760 would be 10 MB/s.
+# Also a placeholder at this time and will be updated to a realistic value in the final product.
+rbps = 01234567
+# Write bandwidth limit (bytes per second). When configured it defines the maximum write throughput
+# for the target device in the configured cgroup. Like rbps this vaule must be given in raw bytes
+# per second. If left unset or configured incorrectly write throttling may not behave as
+# expected. Also a placeholder until final product in which a realistic value will be set. 
+wbpd = 01234567
