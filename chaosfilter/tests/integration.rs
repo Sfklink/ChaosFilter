@@ -1,127 +1,139 @@
+use assert_cmd::{assert::Assert, cargo};
+use predicates::prelude::predicate;
 use tempfile::NamedTempFile;
-use std::{io::Write, process::{Command, Output}};
+use std::io::Write;
 
-fn have_vmtest() -> bool {
-    Command::new("sh")
-        .args(["-lc", "command -v vmtest >/dev/null 2>&1"])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-fn run_vmtest_script(chaosfilter_toml: String) -> Output {
-    let toml = format!(r#"
-        [[target]]
-        name = "chaosfilter help"
-        kernel = "chaosfilter/tests/kernels/bzImage-v6.2-default"
-        command = '''/bin/bash -lc '
-        ip link set eth0 up
-        ip -o link || true
-
-        cd /mnt/vmtest
-        cat > /tmp/chaosfilter.toml <<EOF
-        {chaosfilter_toml}
-        EOF
-
-        cargo build
-        ./target/debug/chaosfilter validate --config /tmp/chaosfilter.toml
-        '
-        '''
-
-        [target.vm]
-        extra_args = ["-nic", "user,model=virtio-net-pci"]
-    "#);
-
-    let mut f = NamedTempFile::new().expect("Could not create temp vmtest config");
-    write!(f, "{toml}").expect("Could not create vmtest config");
-
-    Command::new("vmtest")
-        .args(["--config", f.path().to_str().unwrap()])
+fn get_default_iface() -> Option<String> {
+    let output = std::process::Command::new("ip")
+        .args(["route", "get", "8.8.8.8"])
         .output()
-        .expect("failed to execute vmtest")
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Look for: "dev <iface>"
+    stdout
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find(|w| w[0] == "dev")
+        .map(|w| w[1].to_string())
 }
 
-fn create_chaosfilter_config_toml(iface: &str) -> String {
-    format!(r#"
-        name = "test"
+fn create_chaosfilter_toml(iface: &str) -> String {
+    return format!(r#"
+name = "test"
+[targets]
+iface = "{iface}"
 
-        [targets]
-        iface = "{iface}"
-        cgroup = "test"
+[schedule]
+duration_s = 10
 
-        [schedule]
-        duration_s = 1
+[injectors.network_config]
+enabled = true
+target_iface = "{iface}"
+delay_ms = 100
+loss_percent = 50.0
 
-        [injectors.network_config]
-        enabled = false
+[injectors.memory_config]
+enabled = false
+target_pid = 1234
+move_pid = true
+enable = ["cpu", "memory"]
+cpu_max = "20000 100000"
+mem_max = "1G"
+"#);
+}
 
-        [injectors.memory_config]
-        enabled = false
-    "#)
+fn print_output(cmd: Assert) {
+    eprint!("----- stdout -----\n{}", String::from_utf8_lossy(&cmd.get_output().stdout));
+    eprintln!("----- stderr -----\n{}", String::from_utf8_lossy(&cmd.get_output().stderr));
 }
 
 #[test]
 fn validate_ok() {
-    if !have_vmtest() {
-        eprintln!("Error: vmtest not installed");
-        return;
-    }
+    let iface = get_default_iface().unwrap();
+    let toml = create_chaosfilter_toml(&iface);
 
-    let chaosfilter_toml = create_chaosfilter_config_toml("eth0");
+    let mut file = NamedTempFile::new().unwrap();
+    write!(file, "{toml}").unwrap();
 
-    let out = run_vmtest_script(chaosfilter_toml);
+    let cmd = cargo::cargo_bin_cmd!("chaosfilter")
+        .args(["validate", "--config", file.path().to_str().unwrap()])
+        .assert()
+        .success();
 
-    // Output for Debugging
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-
-    assert!(
-        stdout.contains("Config OK"),
-        "Expected 'Config OK' but got:\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}" 
-    );
+    print_output(cmd);
 }
 
 #[test]
-fn validate_iface_invalid() {
-    if !have_vmtest() {
-        eprintln!("skipping: vmtest not installed");
-        return;
-    }
+fn validate_fail() {
+    let toml = format!(r#"
+name = "test"
 
-    let chaosfilter_toml = create_chaosfilter_config_toml("piss");
+[targets]
+iface = ""
+cgroup = "test"
+"#);
 
-    let out = run_vmtest_script(chaosfilter_toml);
+    let mut file = NamedTempFile::new().unwrap();
+    write!(file, "{toml}").unwrap();
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let cmd = cargo::cargo_bin_cmd!("chaosfilter")
+        .args(["validate", "--config", file.path().to_str().unwrap()])
+        .assert()
+        .failure();
 
-    assert!(
-        !out.status.success(),
-        "expected failure but succeeded and got:\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n"
-    );
-
-    assert!(
-        stderr.contains("network interface not found") || stdout.contains("network interface not found"),
-        "expected 'network interface not found' in output but got:\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n"
-    );
+    print_output(cmd);
 }
 
 #[test]
-fn vm_validate_fail_empty_iface() {
-    if !have_vmtest() {
-        eprintln!("skipping: vmtest not installed");
-        return;
-    }
+fn validate_iface_invalid_iface() {
+    let toml = create_chaosfilter_toml("test");
+    
+    let mut file = NamedTempFile::new().unwrap();
+    write!(file, "{toml}").unwrap();
 
-    let chaosfilter_toml = create_chaosfilter_config_toml("");
+    let cmd =cargo::cargo_bin_cmd!("chaosfilter")
+        .args(["validate", "--config", file.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("network interface not found"));
 
-    let out = run_vmtest_script(chaosfilter_toml);
+    print_output(cmd);
+}
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
+#[test]
+fn run_chaos_plan() {
+    let iface = get_default_iface().unwrap();
+    let toml = create_chaosfilter_toml(&iface);
+    
+    let mut file = NamedTempFile::new().unwrap();
+    write!(file, "{toml}").unwrap();
 
-    assert!(
-        !out.status.success(),
-        "expected failure but succeeded and got:\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n"
-    );
+    let cmd = cargo::cargo_bin_cmd!("chaosfilter")
+        .args(["chaos", "--config", file.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    print_output(cmd);
+}
+
+#[test]
+fn run_chaos_plan_invalid_iface() {
+    let toml = create_chaosfilter_toml("test");
+    
+    let mut file = NamedTempFile::new().unwrap();
+    write!(file, "{toml}").unwrap();
+
+    let cmd = cargo::cargo_bin_cmd!("chaosfilter")
+        .args(["chaos", "--config", file.path().to_str().unwrap()])
+        .assert()
+        .failure();
+
+    print_output(cmd);
 }

@@ -65,7 +65,7 @@ where
             validate_memory_config(&plan)?;
             validate_iface_exists(plan.targets.iface.as_deref())?;
 
-            println!("\nConfig OK.");
+            println!("Config OK.");
             Ok(())
         }
 
@@ -73,7 +73,7 @@ where
             let plan = Plan::load_from_toml_file(&args.config)?;
             run_plan(&plan)?;
 
-            println!("\nChaos Plan Complete.");
+            println!("Chaos Plan Complete.");
             Ok(())
         }
     }
