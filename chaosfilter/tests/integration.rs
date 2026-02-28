@@ -3,6 +3,25 @@ use predicates::prelude::predicate;
 use tempfile::NamedTempFile;
 use std::io::Write;
 
+fn create_chaosfilter_config_toml(iface: &str) -> String {
+    format!(r#"
+        name = "test"
+
+        [targets]
+        iface = "{iface}"
+        cgroup = "test"
+
+        [schedule]
+        duration_s = 1
+
+        [injectors.network_config]
+        enabled = false
+
+        [injectors.memory_config]
+        enabled = false
+    "#)
+}
+
 fn get_default_iface() -> Option<String> {
     let output = std::process::Command::new("ip")
         .args(["route", "get", "8.8.8.8"])
@@ -26,22 +45,9 @@ fn get_default_iface() -> Option<String> {
 
 #[test]
 fn validate_ok() {
-    let iface = get_default_iface().unwrap();
-    let toml = format!(r#"
-        name = "test"
-        [targets]
-        iface = "{iface}"
-        cgroup = "test"
-
-        [schedule]
-        duration_s = 1
-
-        [injectors.network_config]
-        enabled = false
-
-        [injectors.memory_config]
-        enabled = false
-        "#);
+    let iface = get_default_iface()
+        .expect("No default interface found on host");
+    let toml = create_chaosfilter_config_toml(&iface);
 
     let mut file = NamedTempFile::new().unwrap();
     write!(file, "{toml}").unwrap();
@@ -54,13 +60,7 @@ fn validate_ok() {
 
 #[test]
 fn validate_fail() {
-    let toml = r#"
-        name = "test"
-
-        [targets]
-        iface = ""
-        cgroup = "test"
-        "#;
+    let toml = create_chaosfilter_config_toml("");
 
     let mut file = NamedTempFile::new().unwrap();
     write!(file, "{toml}").unwrap();
@@ -73,20 +73,7 @@ fn validate_fail() {
 
 #[test]
 fn validate_iface_invalid() {
-        let toml = r#"
-        name = "test"
-        [targets]
-        iface = "test"
-
-        [schedule]
-        duration_s = 1
-
-        [injectors.network_config]
-        enabled = false
-
-        [injectors.memory_config]
-        enabled = false
-        "#;
+    let toml = create_chaosfilter_config_toml("piss");
     
     let mut file = NamedTempFile::new().unwrap();
     write!(file, "{toml}").unwrap();

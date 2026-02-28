@@ -5,7 +5,7 @@
 name = "netem-test"
 
 [targets]
-iface = "enp5s0"
+iface = "eth0"
 cgroup = "77500" # Optional
 
 [schedule]
