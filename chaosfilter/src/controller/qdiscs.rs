@@ -518,7 +518,7 @@ pub fn print_comparison(
     modified: &PingStats,
 ) -> String {
     let output = format!(
-        "\n===== Network Comparison (Duration: {duration} seconds =====
+        "\n===== Network Comparison (Duration: {duration} seconds) =====
 
 DURING CHAOS ({iface}):
   transmitted : {md_tx}

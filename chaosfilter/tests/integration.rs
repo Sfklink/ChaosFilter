@@ -1,4 +1,4 @@
-use assert_cmd::cargo;
+use assert_cmd::{assert::Assert, cargo};
 use predicates::prelude::predicate;
 use tempfile::NamedTempFile;
 use std::io::Write;
@@ -24,76 +24,116 @@ fn get_default_iface() -> Option<String> {
         .map(|w| w[1].to_string())
 }
 
+fn create_chaosfilter_toml(iface: &str) -> String {
+    return format!(r#"
+name = "test"
+[targets]
+iface = "{iface}"
+
+[schedule]
+duration_s = 10
+
+[injectors.network_config]
+enabled = true
+target_iface = "{iface}"
+delay_ms = 100
+loss_percent = 50.0
+
+[injectors.memory_config]
+enabled = false
+target_pid = 1234
+move_pid = true
+enable = ["cpu", "memory"]
+cpu_max = "20000 100000"
+mem_max = "1G"
+"#);
+}
+
+fn print_output(cmd: Assert) {
+    eprint!("----- stdout -----\n{}", String::from_utf8_lossy(&cmd.get_output().stdout));
+    eprintln!("----- stderr -----\n{}", String::from_utf8_lossy(&cmd.get_output().stderr));
+}
+
 #[test]
 fn validate_ok() {
     let iface = get_default_iface().unwrap();
-    let toml = format!(r#"
-        name = "test"
-        [targets]
-        iface = "{iface}"
-        cgroup = "test"
-
-        [schedule]
-        duration_s = 1
-
-        [injectors.network_config]
-        enabled = false
-
-        [injectors.memory_config]
-        enabled = false
-        "#);
+    let toml = create_chaosfilter_toml(&iface);
 
     let mut file = NamedTempFile::new().unwrap();
     write!(file, "{toml}").unwrap();
 
-    cargo::cargo_bin_cmd!("chaosfilter")
+    let cmd = cargo::cargo_bin_cmd!("chaosfilter")
         .args(["validate", "--config", file.path().to_str().unwrap()])
         .assert()
         .success();
+
+    print_output(cmd);
 }
 
 #[test]
 fn validate_fail() {
-    let toml = r#"
-        name = "test"
+    let toml = format!(r#"
+name = "test"
 
-        [targets]
-        iface = ""
-        cgroup = "test"
-        "#;
+[targets]
+iface = ""
+cgroup = "test"
+"#);
 
     let mut file = NamedTempFile::new().unwrap();
     write!(file, "{toml}").unwrap();
 
-    cargo::cargo_bin_cmd!("chaosfilter")
+    let cmd = cargo::cargo_bin_cmd!("chaosfilter")
         .args(["validate", "--config", file.path().to_str().unwrap()])
         .assert()
         .failure();
+
+    print_output(cmd);
 }
 
 #[test]
-fn validate_iface_invalid() {
-        let toml = r#"
-        name = "test"
-        [targets]
-        iface = "test"
-
-        [schedule]
-        duration_s = 1
-
-        [injectors.network_config]
-        enabled = false
-
-        [injectors.memory_config]
-        enabled = false
-        "#;
+fn validate_iface_invalid_iface() {
+    let toml = create_chaosfilter_toml("test");
     
     let mut file = NamedTempFile::new().unwrap();
     write!(file, "{toml}").unwrap();
 
-    cargo::cargo_bin_cmd!("chaosfilter")
+    let cmd =cargo::cargo_bin_cmd!("chaosfilter")
         .args(["validate", "--config", file.path().to_str().unwrap()])
         .assert()
         .failure()
         .stderr(predicate::str::contains("network interface not found"));
+
+    print_output(cmd);
+}
+
+#[test]
+fn run_chaos_plan() {
+    let iface = get_default_iface().unwrap();
+    let toml = create_chaosfilter_toml(&iface);
+    
+    let mut file = NamedTempFile::new().unwrap();
+    write!(file, "{toml}").unwrap();
+
+    let cmd = cargo::cargo_bin_cmd!("chaosfilter")
+        .args(["chaos", "--config", file.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    print_output(cmd);
+}
+
+#[test]
+fn run_chaos_plan_invalid_iface() {
+    let toml = create_chaosfilter_toml("test");
+    
+    let mut file = NamedTempFile::new().unwrap();
+    write!(file, "{toml}").unwrap();
+
+    let cmd = cargo::cargo_bin_cmd!("chaosfilter")
+        .args(["chaos", "--config", file.path().to_str().unwrap()])
+        .assert()
+        .failure();
+
+    print_output(cmd);
 }
