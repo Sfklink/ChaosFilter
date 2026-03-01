@@ -20,6 +20,8 @@ name = "example-plan"
 
 [targets]
 # Network interface to target (e.g. eth0, enp5s0, vethA)
+# Can set to "default" to select the current system default
+# network interface.
 iface = "enp5s0"
 
 # Optional: cgroup path relative to /sys/fs/cgroup (cgroup v2)

@@ -5,7 +5,8 @@
 name = "netem-test"
 
 [targets]
-iface = "default"
+# Can target explicitly or set to "default" to use the current system default.
+iface = "enp34s0"
 cgroup = "77500" # Optional
 
 [schedule]
@@ -15,7 +16,7 @@ duration_s = 10
 [injectors.network_config]
 enabled = true
 
-target_iface = "default"
+target_iface = "enp34s0"
 delay_ms = 100
 loss_percent = 45.0
 
