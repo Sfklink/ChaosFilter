@@ -5,7 +5,7 @@
 name = "netem-test"
 
 [targets]
-iface = "enp5s0"
+iface = "default"
 cgroup = "77500" # Optional
 
 [schedule]
@@ -15,9 +15,9 @@ duration_s = 10
 [injectors.network_config]
 enabled = true
 
-target_iface = "enp5s0"
+target_iface = "default"
 delay_ms = 100
-loss_percent = 50.0
+loss_percent = 45.0
 
 [injectors.memory_config]
 # Master enable flag for the memory injector
@@ -85,9 +85,9 @@ device = "/dev/placeholder"
 # read throughput for the defined device in the configured cgroup. It must be specified
 # in raw bytes per second e.g. 1048576 would be 1 MB/s and 10485760 would be 10 MB/s.
 # Also a placeholder at this time and will be updated to a realistic value in the final product.
-rbps = 01234567
+rbps = 1234567
 # Write bandwidth limit (bytes per second). When configured it defines the maximum write throughput
 # for the target device in the configured cgroup. Like rbps this vaule must be given in raw bytes
 # per second. If left unset or configured incorrectly write throttling may not behave as
 # expected. Also a placeholder until final product in which a realistic value will be set. 
-wbpd = 01234567
+wbpd = 1234567
