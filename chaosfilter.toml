@@ -13,10 +13,24 @@ duration_s = 10
 
 # qdisc injector
 [injectors.network_config]
+# Master enable flag for the network injector
+# When set to true, the injector will apply network constraints
+# defined by the fields below. If set to false, this configuration 
+# will be ignored at runtime.
 enabled = true
 
+# This is the network interface that you want to target. 
+# You can retrieve a list of possible target network 
+# interfaces by doing `ip link`
 target_iface = "enp5s0"
+
+# This is how much delay (in milliseconds) 
+# you want to apply to the network interface given above.
 delay_ms = 100
+
+# This is how often you want packets to be dropped during the chaos plan. 
+# It is worth noting that this does not mean that "50% of packets will be dropped 
+# at all times", it means that a packet will havea 50% chance of dropping each time.
 loss_percent = 50.0
 
 [injectors.memory_config]
