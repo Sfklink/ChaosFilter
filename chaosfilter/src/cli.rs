@@ -41,7 +41,7 @@ pub struct Cli {
 /// # Variants
 /// - [`Commands::Validate`] → Validates a chaos plan.
 /// - [`Commands::Chaos`] → Executes a chaos plan (apply → hold → revert).
-/// - [`Commands::Menu`] → Launches the interactive CLI UI.
+/// - [`Commands::Schema`] → Print a sample config file with variable descriptions.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Validate a chaos plan (from config or inline flags)
@@ -49,6 +49,9 @@ pub enum Commands {
 
     /// Run the chaos plan (apply -> hold -> revert)
     Chaos(RunConfigArgs),
+
+    /// Print a sample config file with variable descriptions.
+    Schema,
 }
 
 /// Injector configuration block.
@@ -132,6 +135,7 @@ pub struct Schedule {
 pub enum CommonCommand {
     Validate(RunConfigArgs),
     Chaos(RunConfigArgs),
+
 }
 
 #[derive(Debug, Clone, Args)]

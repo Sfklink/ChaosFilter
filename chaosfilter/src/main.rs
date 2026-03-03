@@ -76,6 +76,15 @@ where
             println!("Chaos Plan Complete.");
             Ok(())
         }
+        /*
+        This guy right here.
+        We're going to include a Schema command that points to a txt file /chaosfilter/schema_config.txt,
+        and reads it out.
+         */
+        Commands::Schema => {
+            print_schema();
+            Ok(())
+        }
     }
 }
 
@@ -85,4 +94,7 @@ pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
     qdiscs::run_plan(plan)?;
 
     Ok(())
+}
+pub fn print_schema() {
+    println!("{}", include_str!("schema_config.toml"));
 }

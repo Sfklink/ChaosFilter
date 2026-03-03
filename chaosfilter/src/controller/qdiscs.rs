@@ -101,8 +101,7 @@ impl NetworkConfig {
     /// # Panics
     /// May panic if `plan.targets.iface` is `None` (uses `unwrap()`).
     /// Callers should ensure the plan is valid (e.g., via [`validate_plan`]).
-    pub fn apply(&mut self, plan: &Plan) -> Result<()> {
-        let iface = plan.targets.iface.as_deref().unwrap();
+    pub fn apply(&mut self, plan: &Plan, iface: &str) -> Result<()> {
         let delay_ms = plan.injectors.network_config.delay_ms;
         let loss_percent = plan.injectors.network_config.loss_percent;
 
@@ -116,7 +115,8 @@ impl NetworkConfig {
 
         let status = Command::new("tc")
             .args([
-                "qdisc", "replace", "dev", iface, "root", "netem", "delay", &delay, "loss", &loss,
+                "qdisc", "replace", "dev", iface, "root", "netem",
+                "delay", &delay, "loss", &loss,
             ])
             .status()
             .context("failed to execute tc (apply)")?;
@@ -124,6 +124,7 @@ impl NetworkConfig {
         if !status.success() {
             return Err(anyhow!("tc failed applying netem on {} (need sudo)", iface));
         }
+
         Self::show_qdisc_state(iface);
 
         self.applied = true;
@@ -343,39 +344,35 @@ impl NetworkConfig {
 /// - Baseline or chaos ping stats cannot be collected.
 /// - Applying or reverting the qdisc fails.
 pub fn run_plan(plan: &Plan) -> Result<()> {
-    //
-    //  Hardcoded ping IP is unacceptable, needs to be moved to args & config
-    //
-
     let ping_target = "8.8.8.8";
 
-    let iface = plan
+    // need to resolve iface ONE time here, because we were getting it in multiple spots and
+    // this was causing a grotesque error where we couldn't declare things publically
+    // and except them to cooperate between functions
+
+    let mut iface = plan
         .targets
         .iface
         .as_deref()
-        .ok_or_else(|| anyhow!("targets.iface required for ping report"))?;
-    //
-    // let base_args = NetworkConfig {
-    //     applied: false,
-    //     iface: Option::from(plan.targets.iface.clone().unwrap_or_default()), // see note below
-    //
-    //     // schedule
-    //     duration_s: plan.schedule.duration_s,
-    //
-    //     // targets
-    //
-    //     // netem baseline
-    //     netem_delay_ms: 0,
-    //     netem_loss_percent: 0.0,
-    //
-    //     };
+        .ok_or_else(|| anyhow!("targets.iface required for ping report"))?
+        .to_string();
 
-    // 2) Apply qdisc
+    if iface == "default" {
+        iface = get_default_iface()
+            .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?;
+    }
+
+    let iface_str: &str = &iface;
+
+
+    // apply the mutators
     let mut qdisc = NetworkConfig::default();
-    qdisc.apply(plan)?;
+    qdisc.apply(plan, iface_str)?;
 
-    // 3) Run Chaos
-    let dev = iface.to_string();
+
+
+    // Maintain our ctrl-c functionality
+    let dev = iface.clone();
     ctrlc::set_handler(move || {
         eprintln!("\nCtrl-C: removing qdisc on {dev} and exiting...");
         NetworkConfig::delete_root_qdisc(&dev);
@@ -383,13 +380,17 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     })?;
 
     println!("Holding chaos for {} seconds.", plan.schedule.duration_s);
-    let chaos_stats =
-        run_ping_test(&plan, ping_target).context("Failed to collect chaos ping stats")?;
 
-    // 4) Remove qdisc
+    // Ping using resolved iface (NOT plan.targets.iface)
+    let chaos_stats = run_ping_test_with_iface(iface_str, plan.schedule.duration_s, ping_target)
+        .context("Failed to collect chaos ping stats")?;
+
+    // Revert
     qdisc.revert()?;
 
-    print_comparison(iface, plan.schedule.duration_s, &chaos_stats);
+    // Report using resolved iface
+    print_comparison(iface_str, plan.schedule.duration_s, &chaos_stats);
+
     Ok(())
 }
 
@@ -462,19 +463,16 @@ pub fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
 /// # Notes
 /// RTT values are reported in milliseconds.
 /// Packet loss is a percentage in the range `0.0..=100.0`.
-pub fn run_ping_test(plan: &Plan, target: &str) -> Option<PingStats> {
-    let iface = plan.targets.iface.as_deref()?;
-
+pub fn run_ping_test_with_iface(iface: &str, duration_s: u64, target: &str) -> Option<PingStats> {
     let output = Command::new("ping")
-        .args([
-            "-I",
-            iface,
-            "-w",
-            &plan.schedule.duration_s.to_string(),
-            target,
-        ])
+        .args(["-I", iface, "-w", &duration_s.to_string(), target])
         .output()
         .ok()?;
+
+    // If ping failed (e.g. invalid iface), don't return misleading zeros.
+    if !output.status.success() {
+        return None;
+    }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -511,6 +509,8 @@ pub fn run_ping_test(plan: &Plan, target: &str) -> Option<PingStats> {
         rtt_max,
     })
 }
+
+
 pub fn print_comparison(
     iface: &str,
     duration: u64,
@@ -552,28 +552,30 @@ DURING CHAOS ({iface}):
     output
 }
 
+fn get_default_iface() -> Option<String> {
+    let output = std::process::Command::new("ip")
+        .args(["route", "get", "8.8.8.8"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Look for: "dev <iface>"
+    stdout
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find(|w| w[0] == "dev")
+        .map(|w| w[1].to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    fn get_default_iface() -> Option<String> {
-        let output = std::process::Command::new("ip")
-            .args(["route", "get", "8.8.8.8"])
-            .output()
-            .ok()?;
-
-        if !output.status.success() {
-            return None;
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-
-        // Look for: "dev <iface>"
-        stdout
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .windows(2)
-            .find(|w| w[0] == "dev")
-            .map(|w| w[1].to_string())
-    }
+    //wew
 
     use super::*;
 

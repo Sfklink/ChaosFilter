@@ -126,6 +126,9 @@ cargo run -- validate -c, --config <path-to-toml-file>
 ```
 
 Example Toml Config File:
+
+Run ```chaosfilter --schema``` to see a sample config file with variable descriptors.
+
 `chaosfilter.toml`:
 ```toml
 name = "netem-test"
@@ -162,7 +165,7 @@ cargo run -- chaos -c, --config chaosfilter.toml
 
 ## Development
 
-To add a new module in the controller directory (in this example, Storage), navigate to the Injector struct in cli.rs.
+To add a new module in the controller directory (in this example, ```StorageConfig```), navigate to the ```Injectors``` struct in cli.rs.
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -192,7 +195,7 @@ pub struct StorageConfig {
 
 Once added, `StorageConfig` will be included in the `Plan` struct, and have access to its members. Ensure that `use crate::cli::Plan` is included in your module.
 
-To maintain a level of parity between modules, ensure that all domain-specific logic (Network, Cgroups, Storage) is self-contained within each module.  This will aid future developers in maintaining the software's architecture.
+To maintain a level of parity between modules, ensure that all domain-specific logic (Network, Memory, Storage) is self-contained within each module.  This will aid future developers in maintaining the software's architecture.
 
 ## Documentation
 
