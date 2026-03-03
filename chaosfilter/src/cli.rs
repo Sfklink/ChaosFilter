@@ -9,10 +9,6 @@
 //!     - [`chaosfilter_controller::qdiscs::run_plan`]
 //!     - [`cli::run`]
 
-// Writing this here so I don't lose the thought, argument intake is handled here in cli.rs,
-// then we CAN send those off to a dispatcher function.  All we do here is intake arguments.
-// We don't validate them to see if they play nice.  This is EXCLUSIVELY intake and plan generation.
-
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -41,7 +37,7 @@ pub struct Cli {
 /// # Variants
 /// - [`Commands::Validate`] → Validates a chaos plan.
 /// - [`Commands::Chaos`] → Executes a chaos plan (apply → hold → revert).
-/// - [`Commands::Schema`] → Print a sample config file with variable descriptions.
+/// - [`Commands::Init`] → Output a sample config file to CWD.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Validate a chaos plan (from config or inline flags)
@@ -50,8 +46,12 @@ pub enum Commands {
     /// Run the chaos plan (apply -> hold -> revert)
     Chaos(RunConfigArgs),
 
-    /// Print a sample config file with variable descriptions.
-    Schema,
+    /// Save a config file with variable descriptions to local directory.
+    Init {
+        /// Overwrite the file if it already exists
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// Injector configuration block.
@@ -135,7 +135,7 @@ pub struct Schedule {
 pub enum CommonCommand {
     Validate(RunConfigArgs),
     Chaos(RunConfigArgs),
-
+    Init,
 }
 
 #[derive(Debug, Clone, Args)]

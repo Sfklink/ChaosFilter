@@ -3,7 +3,11 @@ use chaosfilter::controller::pid_cgroup::validate_memory_config;
 use chaosfilter::controller::qdiscs::validate_iface_exists;
 use chaosfilter::controller::{pid_cgroup, qdiscs};
 use clap::Parser;
-use std::process;
+use std::{process,fs, path::{Path, PathBuf}};
+use anyhow::{Context, Result};
+
+const CONFIG_TEMPLATE: &str =
+    include_str!("../assets/init_config.toml");
 
 fn main() {
     if let Err(e) = entry(std::env::args_os()) {
@@ -33,8 +37,8 @@ fn main() {
 ///     - Builds a plan via [`RunLikeArgs::plan_from_args`].
 ///     - Executes the plan via [`chaosfilter_controller::qdiscs::run_plan`].
 ///
-/// - For [`Commands::Menu`]:
-///     - Launches the interactive CLI loop via [`cli::run`].
+/// - For ['Commands::Init']
+///     - Outputs a .toml config file to CWD.
 ///
 /// # Side Effects
 /// - Prints status messages to standard output.
@@ -78,11 +82,13 @@ where
         }
         /*
         This guy right here.
-        We're going to include a Schema command that points to a txt file /chaosfilter/schema_config.txt,
+        We're going to include an initcommand that points to a .toml file so we can spawn one for the user
         and reads it out.
          */
-        Commands::Schema => {
-            print_schema();
+        Commands::Init { force } => {
+            let path = Path::new("cf-config.toml");
+            let written_to = output_config(path, force)?;
+            println!("Config written to: {}", written_to.display());
             Ok(())
         }
     }
@@ -95,6 +101,29 @@ pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
 
     Ok(())
 }
-pub fn print_schema() {
-    println!("{}", include_str!("schema_config.toml"));
+
+
+pub fn output_config(path: &Path, force: bool) -> Result<PathBuf> {
+
+    // Turn whatever the user provided into an absolute-ish path for display
+    // If it's relative, make it relative to the current working directory.
+    let abs_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("failed to read current working directory")?
+            .join(path)
+    };
+
+    if abs_path.exists() && !force {
+        anyhow::bail!(
+            "{} already exists. Re-run with --force to overwrite.",
+            abs_path.display()
+        );
+    }
+
+    fs::write(&abs_path, CONFIG_TEMPLATE)
+        .with_context(|| format!("failed to write config to {}", abs_path.display()))?;
+
+    Ok(abs_path)
 }
