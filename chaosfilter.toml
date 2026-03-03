@@ -14,6 +14,10 @@ duration_s = 10
 
 # qdisc injector
 [injectors.network_config]
+# Master enable flag for the network injector
+# When set to true, the injector will apply network constraints
+# defined by the fields below. If set to false, this configuration 
+# will be ignored at runtime.
 enabled = true
 
 target_iface = "enp34s0"
