@@ -1,0 +1,69 @@
+# ChaosFilter Example Configuration
+#
+# Usage:
+#   chaosfilter chaos --config chaosfilter.toml
+#
+# This file defines:
+#   - Targets (what to affect)
+#   - Schedule (how long to apply chaos)
+#   - Injectors (what kind of chaos to apply)
+
+# Units:
+#   Time: milliseconds (ms)
+#   Memory: supports K/M/G suffix
+#   Bandwidth: bytes per second
+
+# name - Name for plan run.  Allows for identification of separate config runs if user chooses to cat output.
+
+# Targets ----
+    # iface - Network interface to target (e.g. eth0, enp5s0, vethA)
+    # cgroup - cgroup path relative to /sys/fs/cgroup (cgroup v2), or PID
+
+# Schedule ----
+    # duration_s - Duration to keep chaos active (seconds)
+
+# Injectors ---
+    # network_config
+        #target_iface - Optional override (defaults to targets.iface)
+        #delay_ms - Network delay (ms)
+        #loss_percent - Packet loss percentage (0.0 - 100.0)
+    # memory_config
+        #target_pid - Process ID to limit
+        #move_pid - Move process into managed cgroup
+        #enable - Controllers to activate
+        #cpu_max - CPU quota/period pair
+        #cpu_weight - CPU scheduling weight
+        #mem_max - Hard memory cap
+        #mem_high - Memory pressure threshold
+        #swap_max - Swap limit
+    #block_config - Enable block I/O control
+        #device - Block device path
+        #rbps - Read bandwidth limit (B/s)
+        #wbps - Write bandwidth limit (B/s)
+
+name = "example-plan"
+[targets]
+iface = "default"
+cgroup = "77500"
+[schedule]
+duration_s = 10
+[injectors.network_config]
+enabled = true
+target_iface = "default"
+delay_ms = 100
+loss_percent = 10.0
+[injectors.memory_config]
+enabled = false
+target_pid = 1234
+move_pid = true
+enable = ["cpu", "memory"]
+cpu_max = "20000 100000"
+cpu_weight = 200
+mem_max = "1G"
+mem_high = "800M"
+swap_max = "0"
+[injectors.block_config]
+enabled = false
+device = "/dev/sda"
+rbps = 1048576   # 1 MiB/s
+wbps = 1048576   # 1 MiB/s
