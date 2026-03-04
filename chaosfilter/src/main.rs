@@ -1,13 +1,14 @@
-use chaosfilter::cli::{Cli, Commands, Plan};
+use chaosfilter::plans::{Plan, RunConfigArgs};
 use chaosfilter::controller::pid_cgroup::validate_memory_config;
 use chaosfilter::controller::qdiscs::validate_iface_exists;
 use chaosfilter::controller::{pid_cgroup, qdiscs};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::{process,fs, path::{Path, PathBuf}};
 use anyhow::{Context, Result};
+use toml_edit::{value, DocumentMut};
 
 const CONFIG_TEMPLATE: &str =
-    include_str!("../assets/init_config.toml");
+    include_str!("../assets/schema_config.toml");
 
 fn main() {
     if let Err(e) = entry(std::env::args_os()) {
@@ -82,12 +83,12 @@ where
         }
         /*
         This guy right here.
-        We're going to include an initcommand that points to a .toml file so we can spawn one for the user
-        and reads it out.
+        We're going to include an init command that points to a .toml file so we can spawn one for the user
+        and reads it out.  can include pid and interface
          */
-        Commands::Init { force } => {
+        Commands::Init { force, pid, interface } => {
             let path = Path::new("cf-config.toml");
-            let written_to = output_config(path, force)?;
+            let written_to = output_config(path, force, pid, interface.as_deref())?;
             println!("Config written to: {}", written_to.display());
             Ok(())
         }
@@ -103,9 +104,14 @@ pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
 }
 
 
-pub fn output_config(path: &Path, force: bool) -> Result<PathBuf> {
+pub fn output_config(path: &Path,
+                     force: bool,
+                     pid: Option<u32>,
+                     interface: Option<&str>,
+                    ) -> Result<PathBuf> {
 
-    // Turn whatever the user provided into an absolute-ish path for display
+    // check current directory path because relative sucks and is difficult, but I think this may
+    // not be absolutely necessary, just dont run init as root.
     // If it's relative, make it relative to the current working directory.
     let abs_path = if path.is_absolute() {
         path.to_path_buf()
@@ -114,7 +120,6 @@ pub fn output_config(path: &Path, force: bool) -> Result<PathBuf> {
             .context("failed to read current working directory")?
             .join(path)
     };
-
     if abs_path.exists() && !force {
         anyhow::bail!(
             "{} already exists. Re-run with --force to overwrite.",
@@ -122,8 +127,216 @@ pub fn output_config(path: &Path, force: bool) -> Result<PathBuf> {
         );
     }
 
+    // Parse template while preserving formatting/comments
+    let mut doc: DocumentMut = CONFIG_TEMPLATE
+        .parse::<DocumentMut>()
+        .context("embedded config template is invalid TOML")?;
+
+    // If interface provided: set target_iface + enable network injector
+    // i dont like that targets exists
+    // it annoys the fucking shit out of me
+    // but do I  want to correct that?
+    // yeah i do because who the hell else
+    if let Some(iface) = interface {
+
+        doc["injectors"]["network_config"]["target_iface"] = value(iface);
+        doc["injectors"]["network_config"]["enabled"] = value(true);
+
+        // Optional but very user-friendly: also set targets.iface
+        if doc["targets"]["iface"].is_none() {
+            doc["targets"]["iface"] = value(iface);
+        } else {
+            doc["targets"]["iface"] = value(iface);
+        }
+    }
+
+    // If pid provided: set target_pid + enable memory injector
+    if let Some(p) = pid {
+        doc["injectors"]["memory_config"]["target_pid"] = value(p as i64);
+        doc["injectors"]["memory_config"]["enabled"] = value(true);
+    }
+
     fs::write(&abs_path, CONFIG_TEMPLATE)
         .with_context(|| format!("failed to write config to {}", abs_path.display()))?;
 
     Ok(abs_path)
+}
+
+
+/// Top-level CLI argument structure.
+///
+/// This struct represents the root of the CLI command tree.
+/// It is parsed using [`clap::Parser`] and contains the selected
+/// subcommand.
+///
+/// # Behavior
+/// Delegates execution to one of the variants in [`Commands`].
+#[derive(Parser, Debug)]
+#[command(name = "chaosfilter-cli", version, about = "ChaosFilter CLI & UI")]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+}
+/// Available CLI subcommands.
+///
+/// Each variant corresponds to a distinct execution path
+/// within ChaosFilter.
+///
+/// # Variants
+/// - [`Commands::Validate`] → Validates a chaos plan.
+/// - [`Commands::Chaos`] → Executes a chaos plan (apply → hold → revert).
+/// - [`Commands::Init`] → Output a sample config file to CWD.
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Validate a chaos plan (from config or inline flags)
+    Validate(RunConfigArgs),
+
+    /// Run the chaos plan (apply -> hold -> revert)
+    Chaos(RunConfigArgs),
+
+    /// Save a config file with variable descriptions to local directory.
+    Init {
+        /// Overwrite the file if it already exists
+        #[arg(long)]
+        force: bool,
+
+        /// PID to constrain (writes injectors.memory_config.target_pid, sets enabled flag)
+        #[arg(value_name = "PID")]
+        pid: Option<u32>,
+
+        /// Network interface (writes injectors.network_config.target_iface, sets enabled flag)
+        #[arg(value_name = "IFACE")]
+        interface: Option<String>,
+    },
+}
+
+
+
+
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use clap::Parser;
+    use tempfile::NamedTempFile;
+    use std::io::Write;
+
+    #[test]
+    fn clap_parses_config() {
+        let toml = r#"
+            name = "test-config"
+
+            [targets]
+            iface = "enp5s0"
+            cgroup = "test-cgroup"
+
+            [schedule]
+            duration_s = 1
+
+            [injectors.network_config]
+            enabled = false
+
+            [injectors.memory_config]
+            enabled = false
+            "#;
+
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "{toml}").unwrap();
+        let filepath = file.path().to_str().unwrap();
+
+        let cli = Cli::try_parse_from([
+            "chaosfilter",
+            "validate",
+            "--config",
+            filepath,
+        ]).unwrap();
+
+        match cli.command {
+            Commands::Validate(args) => assert_eq!(args.config, filepath),
+            _ => panic!("expected Validate command"),
+        }
+    }
+
+    #[test]
+    fn clap_rejects_config_missing_args() {
+        let err = Cli::try_parse_from([
+            "chaosfilter", "validate"
+        ]).unwrap_err().to_string();
+
+        assert!(err.contains("a value is required for") || err.contains("--config"))
+    }
+
+    #[test]
+    fn load_from_toml_ok_with_defaults() {
+        let toml = r#"
+            name = "test-config"
+
+            [targets]
+            iface = "enp5s0"
+            cgroup = "test-cgroup"
+
+            [schedule]
+            duration_s = 1
+            "#;
+
+        // Injectors were left out here to verify #[serde(default)]
+
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "{toml}").unwrap();
+
+        let plan = Plan::load_from_toml_file(file.path()).unwrap();
+
+        assert_eq!(plan.name, "test-config");
+        assert_eq!(plan.targets.cgroup.as_deref(), Some("test-cgroup"));
+        assert_eq!(plan.targets.iface.as_deref(), Some("enp5s0"));
+        assert_eq!(plan.schedule.duration_s, 1);
+
+        // Verify defaults
+        assert!(!plan.injectors.network_config.enabled);
+        assert!(!plan.injectors.memory_config.enabled);
+        assert_eq!(plan.injectors.memory_config.enable.len(), 0);
+    }
+
+    #[test]
+    fn load_from_toml_ok() {
+        let toml = r#"
+            name = "test-config"
+
+            [targets]
+            iface = "enp5s0"
+            cgroup = "test-cgroup"
+
+            [schedule]
+            duration_s = 1
+
+            [injectors.network_config]
+            enabled = true
+
+            [injectors.memory_config]
+            enabled = true
+            "#;
+
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "{toml}").unwrap();
+
+        let plan = Plan::load_from_toml_file(file.path()).unwrap();
+
+        assert_eq!(plan.name, "test-config");
+        assert_eq!(plan.targets.cgroup.as_deref(), Some("test-cgroup"));
+        assert_eq!(plan.targets.iface.as_deref(), Some("enp5s0"));
+        assert_eq!(plan.schedule.duration_s, 1);
+        assert_eq!(plan.injectors.network_config.enabled, true);
+        assert_eq!(plan.injectors.memory_config.enabled, true);
+        assert_eq!(plan.injectors.memory_config.enable.len(), 0);
+    }
+
+    #[test]
+    fn load_from_toml_file_missing_file() {
+        let err = Plan::load_from_toml_file("/non-existent-folder")
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("failed to read config file:"))
+    }
 }
