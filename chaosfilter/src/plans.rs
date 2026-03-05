@@ -27,7 +27,7 @@ pub struct Plan {
 
     /// Injector configuration (netem, etc.).
     #[serde(default)]
-    pub injectors: Injectors,    
+    pub injectors: Injectors,
 }
 
 
@@ -167,5 +167,6 @@ pub struct RunConfigArgs {
     #[arg(short, long)]
     pub config: String,
 }
+
 
 

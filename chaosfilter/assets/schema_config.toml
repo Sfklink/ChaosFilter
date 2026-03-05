@@ -1,7 +1,7 @@
 # ChaosFilter Example Configuration
 #
 # Usage:
-#   chaosfilter chaos --config chaosfilter.toml
+#   chaosfilter chaos --config cf-config.toml
 #
 # This file defines:
 #   - Targets (what to affect)
@@ -22,11 +22,12 @@ name = "example-plan"
 # Network interface to target (e.g. eth0, enp5s0, vethA)
 # Can set to "default" to select the current system default
 # network interface.
-iface = "enp5s0"
+iface = "default"
 
 # Optional: cgroup path relative to /sys/fs/cgroup (cgroup v2)
 # Example: "77500" or "system.slice/my.service"
-cgroup = "77500"
+
+pid = 0
 
 # --------------------------------------------------
 # Schedule
@@ -44,10 +45,10 @@ duration_s = 10
 # Network (tc netem)
 # -----------------------------
 [injectors.network_config]
-enabled = true
+enabled = false
 
 # Optional override (defaults to targets.iface)
-target_iface = "enp5s0"
+target_iface = "default"
 
 # Network delay (ms)
 delay_ms = 100
@@ -62,7 +63,7 @@ loss_percent = 10.0
 enabled = false
 
 # PID to constrain
-target_pid = 1234
+target_pid = 0
 
 # Move PID into target cgroup before applying limits
 move_pid = true
