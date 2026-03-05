@@ -27,8 +27,7 @@ iface = "default"
 # Optional: cgroup path relative to /sys/fs/cgroup (cgroup v2)
 # Example: "77500" or "system.slice/my.service"
 
-#but does it really
-cgroup = "77500"
+pid = 0
 
 # --------------------------------------------------
 # Schedule
@@ -46,10 +45,10 @@ duration_s = 10
 # Network (tc netem)
 # -----------------------------
 [injectors.network_config]
-enabled = true
+enabled = false
 
 # Optional override (defaults to targets.iface)
-target_iface = "enp5s0"
+target_iface = "default"
 
 # Network delay (ms)
 delay_ms = 100
@@ -64,7 +63,7 @@ loss_percent = 10.0
 enabled = false
 
 # PID to constrain
-target_pid = 1234
+target_pid = 0
 
 # Move PID into target cgroup before applying limits
 move_pid = true

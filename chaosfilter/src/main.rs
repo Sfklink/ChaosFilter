@@ -4,7 +4,7 @@ use chaosfilter::controller::qdiscs::validate_iface_exists;
 use chaosfilter::controller::{pid_cgroup, qdiscs};
 use clap::{Parser, Subcommand};
 use std::{process,fs, path::{Path, PathBuf}};
-use anyhow::{Context, Result};
+use anyhow::Context;
 use toml_edit::{value, DocumentMut};
 
 const CONFIG_TEMPLATE: &str =
@@ -90,6 +90,9 @@ where
             let path = Path::new("cf-config.toml");
             let written_to = output_config(path, force, pid, interface.as_deref())?;
             println!("Config written to: {}", written_to.display());
+            if pid.is_none() && interface.is_none() {
+                println!("No targets supplied, no injectors enabled.");
+            }
             Ok(())
         }
     }
@@ -104,12 +107,13 @@ pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
 }
 
 
-pub fn output_config(path: &Path,
-                     force: bool,
-                     pid: Option<u32>,
-                     interface: Option<&str>,
-                    ) -> Result<PathBuf> {
-
+pub fn output_config(
+                    path: &Path,
+                    force: bool,
+                    pid: Option<u32>,
+                    interface: Option<&str>,
+                    ) -> anyhow::Result<PathBuf> {
+    eprintln!("init args => pid={pid:?}, iface={interface:?}, force={force}");
     // check current directory path because relative sucks and is difficult, but I think this may
     // not be absolutely necessary, just dont run init as root.
     // If it's relative, make it relative to the current working directory.
@@ -127,36 +131,42 @@ pub fn output_config(path: &Path,
         );
     }
 
-    // Parse template while preserving formatting/comments
+// yay
     let mut doc: DocumentMut = CONFIG_TEMPLATE
         .parse::<DocumentMut>()
         .context("embedded config template is invalid TOML")?;
 
     // If interface provided: set target_iface + enable network injector
     // i dont like that targets exists
-    // it annoys the fucking shit out of me
-    // but do I  want to correct that?
-    // yeah i do because who the hell else
+    // it annoys me, but do I  want to correct that?
+    // yeah i do because who else will do it
     if let Some(iface) = interface {
-
-        doc["injectors"]["network_config"]["target_iface"] = value(iface);
         doc["injectors"]["network_config"]["enabled"] = value(true);
-
-        // Optional but very user-friendly: also set targets.iface
+        doc["injectors"]["network_config"]["target_iface"] = value(iface);
+        println!("  network injector enabled (iface={})", iface);
+        // set iface
         if doc["targets"]["iface"].is_none() {
             doc["targets"]["iface"] = value(iface);
         } else {
             doc["targets"]["iface"] = value(iface);
         }
-    }
+    }else{
+        doc["injectors"]["network_config"]["enabled"] = value(false);
+        doc["injectors"]["network_config"]["target_iface"] = value("default");
 
+    }
     // If pid provided: set target_pid + enable memory injector
     if let Some(p) = pid {
         doc["injectors"]["memory_config"]["target_pid"] = value(p as i64);
         doc["injectors"]["memory_config"]["enabled"] = value(true);
+        println!("  memory injector enabled (pid={})", p);
+    }else {
+        doc["injectors"]["memory_config"]["target_pid"] = value("");
+        doc["injectors"]["memory_config"]["enabled"] = value(false);
     }
 
-    fs::write(&abs_path, CONFIG_TEMPLATE)
+
+    fs::write(&abs_path, doc.to_string())
         .with_context(|| format!("failed to write config to {}", abs_path.display()))?;
 
     Ok(abs_path)
@@ -188,24 +198,25 @@ pub struct Cli {
 /// - [`Commands::Init`] → Output a sample config file to CWD.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Validate a chaos plan (from config or inline flags)
+    /// Validate a chaos plan from config. or inline flags)
     Validate(RunConfigArgs),
 
     /// Run the chaos plan (apply -> hold -> revert)
     Chaos(RunConfigArgs),
 
-    /// Save a config file with variable descriptions to local directory.
+    /// Output a config file to local directory.  Include process_id and network_interface
+    /// for auto-enable on network_config and memory_config
     Init {
         /// Overwrite the file if it already exists
         #[arg(long)]
         force: bool,
 
         /// PID to constrain (writes injectors.memory_config.target_pid, sets enabled flag)
-        #[arg(value_name = "PID")]
+        #[arg(value_name = "process_id")]
         pid: Option<u32>,
 
         /// Network interface (writes injectors.network_config.target_iface, sets enabled flag)
-        #[arg(value_name = "IFACE")]
+        #[arg(value_name = "network_interface")]
         interface: Option<String>,
     },
 }
