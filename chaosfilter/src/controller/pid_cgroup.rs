@@ -388,6 +388,7 @@ mod tests {
             injectors: Injectors {
                 network_config: CliNetCfg::default(),
                 memory_config: CliMemCfg::default(),
+                block_config: Default::default(),
             },
         }
     }
