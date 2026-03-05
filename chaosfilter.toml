@@ -16,7 +16,7 @@ duration_s = 10
 [injectors.network_config]
 # Master enable flag for the network injector
 # When set to true, the injector will apply network constraints
-# defined by the fields below. If set to false, this configuration 
+# defined by the fields below. If set to false, this configuration
 # will be ignored at runtime.
 enabled = false
 
@@ -66,23 +66,23 @@ cpu_weight = 200
 mem_max = "1G"
 # Soft memory limit threshold. When memory usage exceeds this value, the kernel
 # will apply memory pressure and throttle allocations instead of immediately
-# killing processes. This provided a gradual degredation model. Useful for 
+# killing processes. This provided a gradual degredation model. Useful for
 # testing how applications respond to memory stress.
 mem_high = "800M"
 # Maximum swap usage allowed. Controls how much swap space the cgroup may use
-# after RAM is exhausted. Setting this to "0" disables swap completely. 
+# after RAM is exhausted. Setting this to "0" disables swap completely.
 # Setting itto "max" allows unlimited swap usage.
 swap_max= "0"
 
 # Block I/O Injector
 [injectors.block_config]
-# The master enable flag for storage injection.  When set to true, the injector 
+# The master enable flag for storage injection.  When set to true, the injector
 # will actively apply Block I/O constraints based on the vaules for the variables
-# below. If set to false, this whole section of the configuration file is ignored 
+# below. If set to false, this whole section of the configuration file is ignored
 # at runtime. This allows the user to 'cherry-pick' which section(s) they want to use.
 enabled = true
-# The target device that the I/O constraints will be applied to. This needs to be a 
-# valid device path based on the device type you are targeting e.g. "/dev/sda", 
+# The target device that the I/O constraints will be applied to. This needs to be a
+# valid device path based on the device type you are targeting e.g. "/dev/sda",
 # "/dev/nvme01", or "/dev/loop0". It is a placeholder value at the moment but will
 # be updated accordingly when implementation is integrated
 device = "/dev/sda"
