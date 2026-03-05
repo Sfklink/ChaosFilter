@@ -1,4 +1,4 @@
-use crate::cli::Plan;
+use crate::plans::Plan;
 //use crate::controller;
 use std::fs;
 use std::os::unix::fs::MetadataExt;

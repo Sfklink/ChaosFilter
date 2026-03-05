@@ -3,7 +3,7 @@
 //! Creates/uses a target cgroup, optionally moves a PID into it, writes cpu/memory knobs,
 //! and can revert by restoring previous knob values (best effort).
 
-use crate::cli::Plan;
+use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::{
     fs,
@@ -373,7 +373,7 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::cli::{Injectors, MemoryConfig as CliMemCfg, NetworkConfig as CliNetCfg, Plan, Schedule, Targets};
+    use crate::plans::{Injectors, MemoryConfig as CliMemCfg, NetworkConfig as CliNetCfg, Plan, Schedule, Targets};
     use super::*;
     use tempfile::TempDir;
 
