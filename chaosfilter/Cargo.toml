@@ -10,6 +10,7 @@ ctrlc = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
+libc = "0.2"
 
 [build-dependencies]
 anyhow = { workspace = true }

@@ -91,6 +91,12 @@ where
             println!("Config written to: {}", written_to.display());
             Ok(())
         }
+
+        Commands::Delay(args) => {
+            let plan = Plan::load_from_toml_file(&args.config)?;
+            chaosfilter::controller::block_delay::run(&plan)?;
+            Ok(())
+        }
     }
 }
 

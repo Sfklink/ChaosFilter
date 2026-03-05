@@ -85,14 +85,14 @@ enabled = true
 # valid device path based on the device type you are targeting e.g. "/dev/sda", 
 # "/dev/nvme01", or "/dev/loop0". It is a placeholder value at the moment but will
 # be updated accordingly when implementation is integrated
-device = "/dev/placeholder"
+device = "/dev/sda"
 # Read bandwidth limit (bytes per second). This value restricts the maximum sustained
 # read throughput for the defined device in the configured cgroup. It must be specified
 # in raw bytes per second e.g. 1048576 would be 1 MB/s and 10485760 would be 10 MB/s.
 # Also a placeholder at this time and will be updated to a realistic value in the final product.
-rbps = 1234567
+rbps = 10485760
 # Write bandwidth limit (bytes per second). When configured it defines the maximum write throughput
 # for the target device in the configured cgroup. Like rbps this vaule must be given in raw bytes
 # per second. If left unset or configured incorrectly write throttling may not behave as
 # expected. Also a placeholder until final product in which a realistic value will be set. 
-wbpd = 1234567
+wbpd = 10485760

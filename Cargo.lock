@@ -134,6 +134,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "ctrlc",
+ "libc",
  "predicates",
  "serde",
  "tempfile",
