@@ -1,7 +1,7 @@
 use chaosfilter::plans::{Plan, RunConfigArgs};
 use chaosfilter::controller::pid_cgroup::validate_memory_config;
 use chaosfilter::controller::qdiscs::validate_iface_exists;
-use chaosfilter::controller::{pid_cgroup, qdiscs};
+use chaosfilter::controller::{block_delay, pid_cgroup, qdiscs};
 use clap::{Parser, Subcommand};
 use std::{process,fs, path::{Path, PathBuf}};
 use anyhow::Context;
@@ -108,6 +108,12 @@ where
 
             Ok(())
         }
+
+        Commands::Delay(args) => {
+            let plan = Plan::load_from_toml_file(&args.config)?;
+            run_plan(&plan)?;
+            Ok(())
+        }
     }
 }
 
@@ -115,6 +121,7 @@ pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
     // Each module should early-return Ok(()) when its injector is disabled.
     pid_cgroup::run_plan(plan)?;
     qdiscs::run_plan(plan)?;
+    block_delay::run(plan)?;
 
     Ok(())
 }
@@ -244,6 +251,8 @@ pub enum Commands {
         iface_pos: Option<String>,
     },
 
+    /// Adding delay command for now will remove later
+    Delay(RunConfigArgs),
 }
 
 

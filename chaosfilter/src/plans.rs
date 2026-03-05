@@ -159,6 +159,7 @@ pub enum CommonCommand {
     Validate(RunConfigArgs),
     Chaos(RunConfigArgs),
     Init,
+    Delay(RunConfigArgs),
 }
 
 #[derive(Debug, Clone, Args)]
