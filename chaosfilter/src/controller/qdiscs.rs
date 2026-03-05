@@ -344,6 +344,9 @@ impl NetworkConfig {
 /// - Baseline or chaos ping stats cannot be collected.
 /// - Applying or reverting the qdisc fails.
 pub fn run_plan(plan: &Plan) -> Result<()> {
+    if !plan.injectors.network_config.enabled {
+        return Ok(());
+    }
     let ping_target = "8.8.8.8";
 
     // need to resolve iface ONE time here, because we were getting it in multiple spots and

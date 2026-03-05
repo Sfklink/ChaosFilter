@@ -27,7 +27,7 @@ iface = "default"
 # Optional: cgroup path relative to /sys/fs/cgroup (cgroup v2)
 # Example: "77500" or "system.slice/my.service"
 
-pid = 0
+cgroup = "0"
 
 # --------------------------------------------------
 # Schedule
@@ -89,12 +89,16 @@ swap_max = "0"
 # -----------------------------
 # Block I/O (cgroup v2 io)
 # -----------------------------
-[injectors.block_config]
-enabled = false
 
-# Target block device (e.g. /dev/sda, /dev/nvme0n1)
+# Block I/O Injector
+[injectors.block_config]
+enabled = true
+
+# The target device that the I/O constraints will be applied to.
 device = "/dev/sda"
 
-# Read / Write bandwidth limits (bytes per second)
-rbps = 1048576   # 1 MiB/s
-wbps = 1048576   # 1 MiB/s
+# Read bandwidth limit (bytes per second).
+rbps = 10485760
+
+# Write bandwidth limit (bytes per second).
+wbpd = 10485760

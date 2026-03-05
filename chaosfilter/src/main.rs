@@ -86,13 +86,26 @@ where
         We're going to include an init command that points to a .toml file so we can spawn one for the user
         and reads it out.  can include pid and interface
          */
-        Commands::Init { force, pid, interface } => {
+        Commands::Init {
+            force,
+            pid,
+            iface,
+            pid_pos,
+            iface_pos,
+        } => {
+            // explicit over positional but should still work
+            // i hope
+            let pid = pid.or(pid_pos);
+            let iface = iface.or(iface_pos);
+
             let path = Path::new("cf-config.toml");
-            let written_to = output_config(path, force, pid, interface.as_deref())?;
+            let written_to = output_config(path, force, pid, iface.as_deref())?;
             println!("Config written to: {}", written_to.display());
-            if pid.is_none() && interface.is_none() {
+
+            if pid.is_none() && iface.is_none() {
                 println!("No targets supplied, no injectors enabled.");
             }
+
             Ok(())
         }
     }
@@ -157,11 +170,14 @@ pub fn output_config(
     }
     // If pid provided: set target_pid + enable memory injector
     if let Some(p) = pid {
-        doc["injectors"]["memory_config"]["target_pid"] = value(p as i64);
+        doc["targets"]["cgroup"] = value(p.to_string());
+        doc["injectors"]["memory_config"]["target_pid"] = value(p.to_string());
         doc["injectors"]["memory_config"]["enabled"] = value(true);
         println!("  memory injector enabled (pid={})", p);
     }else {
         doc["injectors"]["memory_config"]["target_pid"] = value("");
+        doc["targets"]["cgroup"] = value("");
+
         doc["injectors"]["memory_config"]["enabled"] = value(false);
     }
 
@@ -211,14 +227,23 @@ pub enum Commands {
         #[arg(long)]
         force: bool,
 
-        /// PID to constrain (writes injectors.memory_config.target_pid, sets enabled flag)
-        #[arg(value_name = "process_id")]
+        /// PID to constrain (enables memory injector)
+        #[arg(long = "pid", value_name = "PID")]
         pid: Option<u32>,
 
-        /// Network interface (writes injectors.network_config.target_iface, sets enabled flag)
-        #[arg(value_name = "network_interface")]
-        interface: Option<String>,
+        /// Network interface (enables network injector)
+        #[arg(long = "iface", value_name = "IFACE")]
+        iface: Option<String>,
+
+        /// PID to constrain (positional form)
+        #[arg(value_name = "PID")]
+        pid_pos: Option<u32>,
+
+        /// Network interface (positional form)
+        #[arg(value_name = "IFACE")]
+        iface_pos: Option<String>,
     },
+
 }
 
 

@@ -64,6 +64,8 @@ pub struct Injectors {
     pub network_config: NetworkConfig,
     #[serde(default)]
     pub memory_config: MemoryConfig,
+    #[serde(default)]
+    pub block_config: BlockConfig,
 }
 
 /// Configuration for the `controller/qdisc.rs` injector.
@@ -113,6 +115,26 @@ pub struct MemoryConfig {
     pub mem_high: Option<String>,
     pub swap_max: Option<String>,
 }
+
+/// Configuration for block io stuff
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BlockConfig {
+    /// the master enable flag cause it seemed important
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// what it is delaying
+    #[serde(default)]
+    pub device: Option<String>,
+
+    /// specific values that are being affected
+    pub rbps: Option<u64>,
+    pub wbps: Option<u64>,
+    pub riops: Option<u64>,
+    pub wiops: Option<u64>,
+}
+
+
 
 /// Target selection for chaos execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
