@@ -3,7 +3,7 @@
 //! Applies a root `netem` qdisc to the configured network interface and restores
 //! a known-good baseline on revert.
 
-use crate::cli::Plan;
+use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::process::{Command, Stdio};
 

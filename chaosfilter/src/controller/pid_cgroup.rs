@@ -3,7 +3,7 @@
 //! Creates/uses a target cgroup, optionally moves a PID into it, writes cpu/memory knobs,
 //! and can revert by restoring previous knob values (best effort).
 
-use crate::cli::Plan;
+use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::{
     fs,
@@ -106,7 +106,7 @@ impl MemoryConfig {
 
         ensure_cgroup_dir_exists(&cg).context("failed to create/ensure cgroup directory")?;
 
-        // enable controllers on parent (best effort; fail is real because writing knobs may fail anyway)
+        // enable controllers on parent (best effort; fail is real because writing new cgroup vals may fail
         if !plan.injectors.memory_config.enable.is_empty() {
             enable_controllers_on_parent(&cg, &plan.injectors.memory_config.enable)
                 .context("failed enabling controllers on parent cgroup.subtree_control")?;
@@ -265,18 +265,14 @@ fn ensure_cgroup_dir_exists(cg: &Path) -> std::io::Result<()> {
 }
 
 //new write_line that debugs EVEN MORE BETTER
-// so the last failure was due to appending newlines on to it which made cgroups SUPER TEMPERAMENTAL
-// SO NOW
-// IT WERKS
-// BECAUSE WE WERENT GIVING IT NEWLINES TO SCREECH ABOUT AND SAY,"
-// I DONT LIKE CHICKEN NUGGETS ARE DISGUSTING IF YOU DONT PUT THE KETCHUP ON IT IN SMALL DOTS
+// so the last failure was due to appending newlines on to it which makes cgroups SUPER TEMPERAMENTAL
 fn write_line(path: impl AsRef<Path>, value: &str) -> std::io::Result<()> {
     use std::io::Write;
 
     let path = path.as_ref();
     let mut f = fs::OpenOptions::new().write(true).open(path)?;
 
-    // Be strict: cgroup expects exact tokens, no CRLF, no surrounding whitespace.
+    // cgroup expects exact tokens, no CRLF, no surrounding whitespace.
     let v = value.trim();
 
     // One single write to avoid cgroupfs rejecting split writes.
@@ -373,7 +369,7 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::cli::{Injectors, MemoryConfig as CliMemCfg, NetworkConfig as CliNetCfg, Plan, Schedule, Targets};
+    use crate::plans::{Injectors, MemoryConfig as CliMemCfg, NetworkConfig as CliNetCfg, Plan, Schedule, Targets};
     use super::*;
     use tempfile::TempDir;
 
