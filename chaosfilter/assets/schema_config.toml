@@ -102,3 +102,21 @@ enabled = true
 
 # Write bandwidth limit (bytes per second).
 # wbpd = 10485760
+
+# -----------------------------
+# File Descriptor Exhaustion
+# -----------------------------
+
+# File Descriptor Injector
+[injectors.fd_config]
+enabled = false
+
+# target cgroup is read from [targets.cgroup]
+# Every PID in that cgroup will have it's RLIMIT_NOFILE's
+# soft_limit and hard_limit lowered for the duration specified
+
+# What the soft limit will be lowered too (do not set too low)
+soft_limit = 64
+
+# What the hard limit will be lowered too (do not set too low)
+hard_limit = 64
