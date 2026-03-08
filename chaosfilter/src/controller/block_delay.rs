@@ -1,14 +1,14 @@
 use crate::plans::Plan;
 //use crate::controller;
-use std::fs;
-use std::os::unix::fs::MetadataExt;
-use std::path::Path;
 use anyhow::{Result, bail};
 use libc;
+use std::fs;
 use std::io::Write;
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
+use std::process::Command;
 use std::thread;
 use std::time::Duration;
-use std::process::Command;
 use std::time::Instant;
 
 fn major_minor(device_path: &str) -> Result<String> {
@@ -53,7 +53,15 @@ fn run_disk_test(label: &str) -> Result<f64> {
 
     let start = Instant::now();
 
-    let output = Command::new("dd").args(["if=/dev/zero", "of=testfile", "bs=1M", "count=200", "oflag=direct",]).output()?;
+    let output = Command::new("dd")
+        .args([
+            "if=/dev/zero",
+            "of=testfile",
+            "bs=1M",
+            "count=200",
+            "oflag=direct",
+        ])
+        .output()?;
 
     let duration = start.elapsed().as_secs_f64();
 
@@ -76,7 +84,6 @@ fn run_disk_test(label: &str) -> Result<f64> {
 }
 
 pub fn run(plan: &Plan) -> Result<()> {
-
     // bunch of boring verification so you dont brick your system
     let cfg = &plan.injectors.block_config;
 
@@ -170,7 +177,10 @@ pub fn run(plan: &Plan) -> Result<()> {
         file.write_all(rule.as_bytes())?;
     }
 
-    println!("Throttling delay for {} secs. Please hold...", plan.schedule.duration_s);
+    println!(
+        "Throttling delay for {} secs. Please hold...",
+        plan.schedule.duration_s
+    );
     thread::sleep(Duration::from_secs(1)); // short settle time
 
     // EXPERIMENTAL RUN
@@ -195,9 +205,7 @@ pub fn run(plan: &Plan) -> Result<()> {
         Experimental Speed: {:.2} MB/s\n\
         Performance Drop:   {:.2}% slower\n\
         =============================\n",
-        control_speed,
-        experimental_speed,
-        percent
+        control_speed, experimental_speed, percent
     );
 
     println!("{}", results);

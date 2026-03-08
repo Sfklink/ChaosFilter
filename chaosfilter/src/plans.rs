@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use chaosfilter_common::{BlockConfig, MemoryConfig, NetworkConfig};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -29,7 +30,6 @@ pub struct Plan {
     #[serde(default)]
     pub injectors: Injectors,
 }
-
 
 impl Plan {
     /// Loads a [`Plan`] from a TOML configuration file.
@@ -68,74 +68,6 @@ pub struct Injectors {
     pub block_config: BlockConfig,
 }
 
-/// Configuration for the `controller/qdisc.rs` injector.
-/// THIS IS MISSING QUITE A BIT, WHAT'S THE INTERFACE THAT WE'RE CONNECTING TO
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct NetworkConfig {
-    /// Master enable flag for this injector.
-    #[serde(default)]
-    pub enabled: bool,
-
-    #[serde(default)]
-    pub target_iface: Option<String>,
-
-    /// Packet delay in milliseconds.
-    #[serde(default)]
-    pub delay_ms: u32,
-
-    /// Packet loss percentage (`0.0`–`100.0`).
-    #[serde(default)]
-    pub loss_percent: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct MemoryConfig {
-    /// Master enable flag for this injector.
-    #[serde(default)]
-    pub enabled: bool,
-
-    /// PID to move / apply limits to.
-    pub target_pid: Option<u32>,
-
-    /// If true, move PID into the target cgroup before writing new config.
-    #[serde(default)]
-    pub move_pid: bool,
-
-    /// Controllers to enable on the *parent* subtree_control (v2).
-    /// Example: ["cpu", "memory"]
-    #[serde(default)]
-    pub enable: Vec<String>,
-
-    /// cpu.max value, stored in cgroup v2 format: "max 100000" or "50000 100000"
-    pub cpu_max: Option<String>,
-
-    pub cpu_weight: Option<u32>,
-
-    pub mem_max: Option<String>,
-    pub mem_high: Option<String>,
-    pub swap_max: Option<String>,
-}
-
-/// Configuration for block io stuff
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct BlockConfig {
-    /// the master enable flag cause it seemed important
-    #[serde(default)]
-    pub enabled: bool,
-
-    /// what it is delaying
-    #[serde(default)]
-    pub device: Option<String>,
-
-    /// specific values that are being affected
-    pub rbps: Option<u64>,
-    pub wbps: Option<u64>,
-    pub riops: Option<u64>,
-    pub wiops: Option<u64>,
-}
-
-
-
 /// Target selection for chaos execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Targets {
@@ -169,6 +101,3 @@ pub struct RunConfigArgs {
     #[arg(short, long)]
     pub config: String,
 }
-
-
-

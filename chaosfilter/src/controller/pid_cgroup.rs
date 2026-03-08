@@ -369,8 +369,9 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::plans::{Injectors, MemoryConfig as CliMemCfg, NetworkConfig as CliNetCfg, Plan, Schedule, Targets};
     use super::*;
+    use crate::plans::{Injectors, Plan, Schedule, Targets};
+    use chaosfilter_common::{MemoryConfig as CliMemCfg, NetworkConfig as CliNetCfg};
     use tempfile::TempDir;
 
     fn base_plan() -> Plan {
@@ -471,11 +472,7 @@ mod tests {
 
     #[test]
     fn enable_controllers_on_parent_errors_when_no_parent() {
-        let err = enable_controllers_on_parent(
-            Path::new("/"), 
-            &["cpu".to_string()]
-        )
-        .unwrap_err();
+        let err = enable_controllers_on_parent(Path::new("/"), &["cpu".to_string()]).unwrap_err();
 
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
@@ -539,7 +536,9 @@ mod tests {
         fs::create_dir_all(&cgroup).unwrap();
         fs::write(cgroup.join("cgroup.type"), "threaded\n").unwrap();
 
-        let err = MemoryConfig::assert_domain_cgroup(&cgroup).unwrap_err().to_string();
+        let err = MemoryConfig::assert_domain_cgroup(&cgroup)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("threaded"));
         assert!(err.contains("cannot move PID"));
     }
