@@ -267,3 +267,159 @@ fn set_rlimit_nofile(pid: u32, soft: u64, hard: u64) -> Result<()> {
 
     Ok(())
 }
+
+// tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plans::{
+        BlockConfig, FdConfig, Injectors, MemoryConfig as CliMemCfg,
+        NetworkConfig as CliNetCfg, Plan, Schedule, Targets
+    };
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn base_plan() -> Plan {
+        Plan {
+            name: "test".to_string(),
+            targets: Targets {
+                cgroup: None,
+                iface: None,
+            },
+            schedule: Schedule { duration_s: 0 },
+            injectors: Injectors {
+                network_config: CliNetCfg::default(),
+                memory_config: CliMemCfg::default(),
+                block_config: BlockConfig::default(),
+                fd_config: FdConfig::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn resolve_cgroup_path_absolute() {
+        let path = resolve_cgroup_path("/tmp/test");
+        assert_eq!(path, PathBuf::from("/tmp/test"));
+    }
+
+    #[test]
+    fn resolve_cgroup_path_relative() {
+        let path = resolve_cgroup_path("test");
+        assert_eq!(path, Path::new("/sys/fs/cgroup").join("test"));
+    }
+
+    #[test]
+    fn read_cgroup_pids_parse() {
+        let directory = TempDir::new().unwrap();
+        let procs = directory.path().join("cgroup.procs");
+        fs::write(&procs, "123\n456\n789\n").unwrap();
+
+        let pids = read_cgroup_pids(directory.path()).unwrap();
+        assert_eq!(pids, vec![123, 456, 789]);
+    }
+
+    #[test]
+    fn read_cgroup_pids_empty() {
+        let directory = TempDir::new().unwrap();
+        fs::write(directory.path().join("cgroup.procs"), "").unwrap();
+
+        let pids = read_cgroup_pids(directory.path()).unwrap();
+        assert!(pids.is_empty());
+    }
+
+    #[test]
+    fn read_cgroup_pids_missing() {
+        let directory = TempDir::new().unwrap();
+
+        let err = read_cgroup_pids(directory.path()).unwrap_err().to_string();
+        assert!(err.contains("cannot read"));
+    }
+
+    #[test]
+    fn get_rlimit_nofile_current_process() {
+        let (soft, hard) = get_rlimit_nofile(0).unwrap();
+
+        assert!(soft > 0,  "soft limit should be > 0");
+        assert!(hard >= soft, "hard must be >= soft");
+    }
+
+    #[test]
+    fn set_and_restore_rlimit_nofile() {
+        let self_pid = 0u32;
+        let (original_soft, original_hard) = get_rlimit_nofile(self_pid).unwrap();
+
+        if original_hard < 512 {
+            println!("Skipping: original hard limit ({}) < 512", original_hard);
+            return;
+        }
+
+        set_rlimit_nofile(self_pid, 512, 512).unwrap();
+
+        let (new_soft, new_hard) = get_rlimit_nofile(self_pid).unwrap();
+        assert_eq!(new_soft, 512);
+        assert_eq!(new_hard, 512);
+
+        set_rlimit_nofile(self_pid, original_soft, original_hard).unwrap();
+        let (restored_soft, restored_hard) = get_rlimit_nofile(self_pid).unwrap();
+        assert_eq!(restored_soft, original_soft);
+        assert_eq!(restored_hard, original_hard);
+    }
+
+    #[test]
+    fn validate_fd_config_ok_disabled() {
+        let plan = base_plan();
+        validate_fd_config(&plan).unwrap();
+    }
+
+    #[test]
+    fn validate_fd_config_error_enabled_no_cgroup() {
+        let mut plan = base_plan();
+
+        plan.injectors.fd_config.enabled = true;
+        plan.injectors.fd_config.soft_limit = 64;
+        plan.injectors.fd_config.hard_limit = 64;
+
+        let err = validate_fd_config(&plan).unwrap_err().to_string();
+        assert!(err.contains("requires targets.cgroup"));
+    }
+
+    #[test]
+    fn validate_fd_config_error_cgroup_missing() {
+        let mut plan = base_plan();
+
+        plan.injectors.fd_config.enabled = true;
+        plan.injectors.fd_config.soft_limit = 64;
+        plan.injectors.fd_config.hard_limit = 64;
+        plan.targets.cgroup = Some("/nonexistent/cgroup/path".to_string());
+
+        let err = validate_fd_config(&plan).unwrap_err().to_string();
+        assert!(err.contains("does not exist"));
+    }
+
+    #[test]
+    fn validate_fd_config_error_soft_greater_than_hard() {
+        let dir = TempDir::new().unwrap();
+        let mut plan = base_plan();
+
+        plan.injectors.fd_config.enabled = true;
+        plan.injectors.fd_config.soft_limit = 200;
+        plan.injectors.fd_config.hard_limit = 100;
+        plan.targets.cgroup = Some(dir.path().to_str().unwrap().to_string());
+
+        let err = validate_fd_config(&plan).unwrap_err().to_string();
+        assert!(err.contains("soft_limit") && err.contains("hard_limit"));
+    }
+
+    #[test]
+    fn validate_fd_config_ok() {
+        let dir = TempDir::new().unwrap();
+        let mut plan = base_plan();
+
+        plan.injectors.fd_config.enabled = true;
+        plan.injectors.fd_config.soft_limit = 64;
+        plan.injectors.fd_config.hard_limit = 64;
+        plan.targets.cgroup = Some(dir.path().to_str().unwrap().to_string());
+
+        validate_fd_config(&plan).unwrap();
+    }
+}
