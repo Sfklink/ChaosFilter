@@ -6,7 +6,7 @@ name = "netem-test"
 
 [targets]
 # Can target explicitly or set to "default" to use the current system default.
-iface = "wlp3s0"
+iface = "enp34s0"
 cgroup = "77500" # Optional
 
 [schedule]
