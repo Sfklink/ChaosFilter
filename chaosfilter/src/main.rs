@@ -182,8 +182,8 @@ pub fn output_config(
         doc["injectors"]["memory_config"]["enabled"] = value(true);
         println!("  memory injector enabled (pid={})", p);
     }else {
-        doc["injectors"]["memory_config"]["target_pid"] = value("");
-        doc["targets"]["cgroup"] = value("");
+        doc["injectors"]["memory_config"]["target_pid"] = value(0);
+        doc["targets"]["cgroup"] = value(0);
 
         doc["injectors"]["memory_config"]["enabled"] = value(false);
     }
