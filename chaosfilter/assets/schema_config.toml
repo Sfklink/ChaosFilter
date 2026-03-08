@@ -48,13 +48,13 @@ duration_s = 10
 enabled = false
 
 # Optional override (defaults to targets.iface)
-target_iface = "default"
+# target_iface = "default"
 
 # Network delay (ms)
-delay_ms = 100
+# delay_ms = 100
 
 # Packet loss percentage (0.0 - 100.0)
-loss_percent = 10.0
+# loss_percent = 10.0
 
 # -----------------------------
 # CPU + Memory (cgroup v2)
@@ -63,28 +63,28 @@ loss_percent = 10.0
 enabled = false
 
 # PID to constrain
-target_pid = 0
+# target_pid = 0
 
 # Move PID into target cgroup before applying limits
-move_pid = true
+# move_pid = true
 
 # Controllers to enable in cgroup.subtree_control
-enable = ["cpu", "memory"]
+# enable = ["cpu", "memory"]
 
 # CPU quota/period (e.g. "20000 100000" = 20% of one CPU)
-cpu_max = "20000 100000"
+# cpu_max = "20000 100000"
 
 # CPU weight (1 - 10000)
-cpu_weight = 200
+# cpu_weight = 200
 
 # Hard memory limit
-mem_max = "1G"
+# mem_max = "1G"
 
 # Soft memory pressure threshold
-mem_high = "800M"
+# mem_high = "800M"
 
 # Swap limit ("0" disables swap, "max" allows unlimited)
-swap_max = "0"
+# swap_max = "0"
 
 # -----------------------------
 # Block I/O (cgroup v2 io)
@@ -95,10 +95,10 @@ swap_max = "0"
 enabled = true
 
 # The target device that the I/O constraints will be applied to.
-device = "/dev/sda"
+# device = "/dev/sda"
 
 # Read bandwidth limit (bytes per second).
-rbps = 10485760
+# rbps = 10485760
 
 # Write bandwidth limit (bytes per second).
-wbpd = 10485760
+# wbpd = 10485760
