@@ -65,6 +65,9 @@ setup() {
           # add openat operations
           exec 3</dev/null 2>/dev/null && exec 3>&- || true
 
+          # add socket operations
+          exec 3<>/dev/tcp/127.0.0.1/1 2>/dev/null && exec 3>&- || true
+
           # keep them alive
           read -t 0.1 < /dev/null || true
         done
