@@ -22,12 +22,12 @@ name = "example-plan"
 # Network interface to target (e.g. eth0, enp5s0, vethA)
 # Can set to "default" to select the current system default
 # network interface.
-iface = "default"
+iface = "wlp0s20f3"
 
 # Optional: cgroup path relative to /sys/fs/cgroup (cgroup v2)
 # Example: "77500" or "system.slice/my.service"
 
-cgroup = "0"
+cgroup = "chaos-test"
 
 # --------------------------------------------------
 # Schedule
@@ -92,7 +92,7 @@ enabled = false
 
 # Block I/O Injector
 [injectors.block_config]
-enabled = true
+enabled = false
 
 # The target device that the I/O constraints will be applied to.
 # device = "/dev/sda"
@@ -109,7 +109,7 @@ enabled = true
 
 # File Descriptor Injector
 [injectors.fd_config]
-enabled = false
+enabled = true
 
 # target cgroup is read from [targets.cgroup]
 # Every PID in that cgroup will have it's RLIMIT_NOFILE's
@@ -119,4 +119,4 @@ enabled = false
 soft_limit = 64
 
 # What the hard limit will be lowered too (do not set too low)
-hard_limit = 64
+hard_limit = 128

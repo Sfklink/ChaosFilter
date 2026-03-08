@@ -385,6 +385,7 @@ mod tests {
                 network_config: CliNetCfg::default(),
                 memory_config: CliMemCfg::default(),
                 block_config: Default::default(),
+                fd_config: Default::default()
             },
         }
     }
