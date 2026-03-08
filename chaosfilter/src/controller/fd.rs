@@ -18,7 +18,7 @@
 use crate::plans::Plan;
 use anyhow::{anyhow, Result, Context};
 use libc::{self, rlimit64, RLIMIT_NOFILE};
-use std::{fs, path::{Path, PathBuf}};
+use std::{fs, path::{Path, PathBuf}, io::{BufRead, BufReader}, process::{Child, Command, Stdio}, collections::HashMap};
 
 /// Snapshot of each RLIMIT_NOFILE per process
 struct SavedLimitConfig {
@@ -27,11 +27,20 @@ struct SavedLimitConfig {
     hard: u64,
 }
 
+/// A denied syscall captured by strace
+#[derive(Debug)]
+pub struct DeniedCall {
+    pub pid: u32,
+    pub syscall: String,
+    pub raw_line: String
+}
+
 /// Tracker for the cgroup so what was applied can be undone with `revert`
 #[derive(Default)]
 pub struct FdExhaustConfig {
     applied: bool,
-    saved: Vec<SavedLimitConfig>
+    saved: Vec<SavedLimitConfig>,
+    pub denials: Vec<DeniedCall>
 }
 
 /// Validates the [`FdConfig`][crate::plans::FdConfig] section of a [`Plan`].
@@ -142,8 +151,10 @@ impl FdExhaustConfig {
         self.applied = true;
 
         let duration = plan.schedule.duration_s;
-        println!("\nHolding reduced limits for {} seconds...", duration);
-        std::thread::sleep(std::time::Duration::from_secs(duration));
+        println!("\nHolding reduced limits for {} seconds...\n", duration);
+
+        self.denials = collect_denials(&pids, duration);
+
         println!("File exhaustion complete! Reverting all limits...\n");
 
         Ok(())
@@ -194,11 +205,46 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     injector.apply(plan)?;
     injector.revert()?;
 
+    print_results(plan.clone(), &injector.denials);
+
     Ok(())
 }
 
 // Helper methods
-//
+fn print_results(plan: Plan, denials: &[DeniedCall]) {
+    let duration_s = plan.schedule.duration_s;
+    let cgroup = plan.targets.cgroup.as_deref().unwrap_or("unknown");
+    
+    println!("");
+    println!("===== FD Exhaustion (Duration: {duration_s}s CGroup: {cgroup}) =====");
+
+    if denials.is_empty() {
+        println!("No EMFILE denials captured.");
+    } else {
+        println!("Total EMFILE denials: {}\n", denials.len());
+
+        let mut by_syscall: HashMap<&str, usize> = HashMap::new();
+
+        for d in denials {
+            *by_syscall.entry(d.syscall.as_str()).or_insert(0) += 1;
+        }
+
+        let mut counts: Vec<_> = by_syscall.iter().collect();
+        counts.sort_by(|a, b| b.1.cmp(a.1));
+
+        println!("Denials by syscall:");
+        for (syscall, count) in &counts {
+            println!("\t{} {}", syscall, count);
+        }
+
+        println!("");
+        println!("First 5 raw denials:");
+        for d in denials.iter().take(5) {
+            println!("\t{}", d.raw_line);
+        }
+    }
+}
+
 /// Returns all PIDs listen in <targets.cgroup>/**
 fn read_cgroup_pids(cg: &Path) -> Result<Vec<u32>> {
     let procs_path = cg.join("cgroup.procs");
@@ -266,6 +312,98 @@ fn set_rlimit_nofile(pid: u32, soft: u64, hard: u64) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Spawns `strace` attached to all `pids`, runs it for `duration_s` seconds,
+/// kills it, and parses every line that contains `EMFILE`.
+///
+/// If `strace` is not installed or fails to attach, returns an empty vector
+/// and a warning that the chaos plan did run, was completed, and reverts
+/// normally, but you cannot see the results without `strace`.
+fn collect_denials(pids: &[u32], duration_s: u64) -> Vec<DeniedCall> {
+    let mut cmd = Command::new("strace");
+    cmd.args([
+        "-f",
+        "-e", "trace=open,openat,socket,accept4,pipe,pipe2",
+        "-e", "status=failed",
+    ]);
+    
+    for &pid in pids {
+        cmd.args(["-p", &pid.to_string()]);
+    }
+
+    // Because strace throws its output to stderr by default, throw out stdout
+    // and pipe stderr into the program instead.
+    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+
+    let child: Option<Child> = match cmd.spawn() {
+        Ok(c) => Some(c),
+        Err(e) => {
+            eprintln!("Warning: Could not spawn strace({}); skipping denial collecting", e);
+            eprintln!("Please verify that strace is installed (sudo apt/dnf/pacman install strace)\n");
+            None
+        }
+    };
+
+    std::thread::sleep(std::time::Duration::from_secs(duration_s));
+
+    // If strace isn't available, do not parse and return empty vector
+    let mut child = match child {
+        Some(c) => c,
+        None => return vec![]
+    };
+
+    let _ = child.kill();
+    let output = match child.wait_with_output() {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("Warning: strace wait failed: {}", e);
+            return vec![];
+        }
+    };
+
+    parse_emfile_results(&output.stderr)
+}
+
+/// Parses raw strace stderr output and returns one [`DeniedCall`] per EMFILE line.
+///
+/// strace output format with -f:
+///   [pid 12345] openat(AT_FDCWD, "/dev/null", O_RDONLY) = -1 EMFILE (Too many open files)
+/// without -f single pid):
+///   openat(AT_FDCWD, "/dev/null", O_RDONLY) = -1 EMFILE (Too many open files)
+fn parse_emfile_results(raw: &[u8]) -> Vec<DeniedCall> {
+    BufReader::new(raw)
+        .lines()
+        .map_while(Result::ok)
+        .filter(|line| line.contains("EMFILE"))
+        .map(|line| {
+            // pid from "[pid 12345]" prefix
+            let pid = if line.starts_with("[pid ") {
+                line.split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.trim_end_matches(']').parse::<u32>().ok())
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+
+            // syscall name = last word before '('
+            let syscall = line
+                .split('(')
+                .next()
+                .unwrap_or("")
+                .split_whitespace()
+                .last()
+                .unwrap_or("unknown")
+                .to_string();
+
+            DeniedCall {
+                pid,
+                syscall,
+                raw_line: line,
+            }
+        })
+        .collect()
 }
 
 // tests

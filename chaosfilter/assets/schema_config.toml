@@ -116,7 +116,7 @@ enabled = true
 # soft_limit and hard_limit lowered for the duration specified
 
 # What the soft limit will be lowered too (do not set too low)
-soft_limit = 64
+soft_limit = 2
 
 # What the hard limit will be lowered too (do not set too low)
-hard_limit = 128
+hard_limit = 4

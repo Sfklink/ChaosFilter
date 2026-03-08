@@ -62,8 +62,10 @@ setup() {
   for i in $(seq 1 "$PIDS_COUNT"); do
     bash -c '
         while true; do
-          # try to open a new fd - this is what EMFILE will block
+          # add openat operations
           exec 3</dev/null 2>/dev/null && exec 3>&- || true
+
+          # keep them alive
           read -t 0.1 < /dev/null || true
         done
     ' &
