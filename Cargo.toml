@@ -2,7 +2,8 @@
 resolver = "2"
 members = [
     "chaosfilter"
-]
+, "chaosfilter-common", "chaosfilter-ebpf"]
+default-members = ["chaosfilter"]
 # At run time, the first problem to start is the CLI
 
 [workspace.package]

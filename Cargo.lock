@@ -143,6 +143,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "chaosfilter-common"
+version = "0.1.0"
+
+[[package]]
+name = "chaosfilter-ebpf"
+version = "0.1.0"
+dependencies = [
+ "chaosfilter-common",
+]
+
+[[package]]
 name = "clap"
 version = "4.5.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"

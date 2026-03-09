@@ -1,0 +1,11 @@
+[package]
+name = "chaosfilter-ebpf"
+version = "0.1.0"
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+chaosfilter-common = { path = "../chaosfilter-common" }
+
+[lib]
+path = "src/lib.rs"
