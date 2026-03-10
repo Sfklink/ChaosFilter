@@ -41,7 +41,6 @@ pub async fn attach_classifier(iface: &str) -> Result<EbpfHandle> {
         }
     }
 
-    // harmless if already exists
     let _ = tc::qdisc_add_clsact(iface);
 
     let program: &mut SchedClassifier = ebpf
