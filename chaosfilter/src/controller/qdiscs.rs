@@ -11,9 +11,9 @@ use std::process::{Command, Stdio};
 ///
 /// Tracks whether chaos was applied so `revert` can be idempotent.
 ///
-// THIS IS A PROBLEM.
-// Here, we are making the mistake of supplying domain logic to itself internally, we don't like that.
-// It takes in arguments, it does the thing.  Right now, this stinks, and is not testable.
+/// THIS IS A PROBLEM.
+/// Here, we are making the mistake of supplying domain logic to itself internally, we don't like that.
+/// It takes in arguments, it does the thing.  Right now, this stinks, and is not testable.
 #[derive(Default)]
 pub struct NetworkConfig {
     applied: bool,
@@ -59,8 +59,6 @@ impl NetworkConfig {
     ///
     /// # Panics
     /// This function does not explicitly panic.
-    ///
-
     pub fn show_qdisc_state(iface: &str) {
         match Command::new("tc")
             .args(["qdisc", "show", "dev", iface])
@@ -106,23 +104,50 @@ impl NetworkConfig {
         let loss_percent = plan.injectors.network_config.loss_percent;
 
         println!(
-            "[qdisc] applying netem to {} (delay={}ms loss={}%)",
+            "[qdisc] applying targeted netem to {} (delay={}ms loss={}%)",
             iface, delay_ms, loss_percent
         );
 
         let delay = format!("{delay_ms}ms");
         let loss = format!("{loss_percent}%");
 
+        let root_status = Command::new("tc")
+            .args(["qdisc", "replace", "dev", iface, "root", "handle", "1:", "prio", "bands",
+        "2",
+        "priomap",
+        "0", "0", "0", "0",
+        "0", "0", "0", "0",
+        "0", "0", "0", "0",
+        "0", "0", "0", "0",])
+            .status()
+            .context("failed to execute tc (root prio)")?;
+
+        if !root_status.success() && !root_prio_exists(iface)? {
+            return Err(anyhow!("tc failed creating prio root qdisc on {}", iface));
+        }
+
         let status = Command::new("tc")
             .args([
-                "qdisc", "replace", "dev", iface, "root", "netem",
+                "qdisc", "replace", "dev", iface, "parent", "1:2", "handle", "20:", "netem",
                 "delay", &delay, "loss", &loss,
             ])
             .status()
-            .context("failed to execute tc (apply)")?;
+            .context("failed to execute tc (netem child)")?;
 
         if !status.success() {
-            return Err(anyhow!("tc failed applying netem on {} (need sudo)", iface));
+            return Err(anyhow!("tc failed applying child netem on {}", iface));
+        }
+
+        let status = Command::new("tc")
+            .args([
+                "filter", "replace", "dev", iface, "parent", "1:", "protocol", "all", "prio",
+                "1", "handle", "1", "fw", "flowid", "1:2",
+            ])
+            .status()
+            .context("failed to execute tc (fw filter)")?;
+
+        if !status.success() {
+            return Err(anyhow!("tc failed installing fw filter on {}", iface));
         }
 
         Self::show_qdisc_state(iface);
@@ -367,12 +392,9 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 
     let iface_str: &str = &iface;
 
-
     // apply the mutators
     let mut qdisc = NetworkConfig::default();
     qdisc.apply(plan, iface_str)?;
-
-
 
     // Maintain our ctrl-c functionality
     let dev = iface.clone();
@@ -513,7 +535,6 @@ pub fn run_ping_test_with_iface(iface: &str, duration_s: u64, target: &str) -> O
     })
 }
 
-
 pub fn print_comparison(
     iface: &str,
     duration: u64,
@@ -555,7 +576,23 @@ DURING CHAOS ({iface}):
     output
 }
 
-fn get_default_iface() -> Option<String> {
+fn root_prio_exists(iface: &str) -> Result<bool> {
+    let output = Command::new("tc")
+        .args(["qdisc", "show", "dev", iface])
+        .output()
+        .context("failed to execute tc qdisc show")?;
+
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout
+        .lines()
+        .any(|line| line.contains("qdisc prio") && line.contains("root") && line.contains("1:")))
+}
+
+pub fn get_default_iface() -> Option<String> {
     let output = std::process::Command::new("ip")
         .args(["route", "get", "8.8.8.8"])
         .output()
@@ -595,11 +632,9 @@ mod tests {
         assert!(err.contains("network interface not found"));
     }
 
-
     #[test]
     #[cfg(target_os = "linux")]
     fn validate_iface_exists_success() {
-
         // there does exist the change of ip not being available, which can happen
         // in the case that we are not running as root
 
@@ -614,8 +649,7 @@ mod tests {
             return;
         }
 
-        let iface = get_default_iface()
-            .expect("Could not determine default interface");
+        let iface = get_default_iface().expect("Could not determine default interface");
 
         validate_iface_exists(Some(&iface)).unwrap();
     }
@@ -628,7 +662,7 @@ mod tests {
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
-        
+
         let err = validate_iface_exists(Some("test")).unwrap_err().to_string();
         assert!(err.contains("network interface not found"))
     }

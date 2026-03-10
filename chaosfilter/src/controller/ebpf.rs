@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
-use aya::programs::{tc, SchedClassifier, TcAttachType};
-use aya::Ebpf;
+use aya::{
+    maps::HashMap,
+    programs::{tc, SchedClassifier, TcAttachType},
+    Ebpf,
+};
 #[rustfmt::skip]
 use log::{debug, warn};
 
@@ -8,7 +11,7 @@ pub struct EbpfHandle {
     _ebpf: Ebpf,
 }
 
-pub async fn attach_classifier(iface: &str) -> Result<EbpfHandle> {
+pub async fn attach_classifier(iface: &str, target_cgroup_ids: &[u64]) -> Result<EbpfHandle> {
     let rlim = libc::rlimit {
         rlim_cur: libc::RLIM_INFINITY,
         rlim_max: libc::RLIM_INFINITY,
@@ -38,6 +41,21 @@ pub async fn attach_classifier(iface: &str) -> Result<EbpfHandle> {
                     guard.clear_ready();
                 }
             });
+        }
+    }
+
+    {
+        let map = ebpf
+            .map_mut("TARGET_CGROUPS")
+            .context("TARGET_CGROUPS map not found")?;
+
+        let mut targets: HashMap<_, u64, u8> =
+            HashMap::try_from(map).context("failed to open TARGET_CGROUPS")?;
+
+        for id in target_cgroup_ids {
+            targets
+                .insert(*id, 1, 0)
+                .with_context(|| format!("failed to insert target cgroup id {id}"))?;
         }
     }
 

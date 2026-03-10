@@ -1,7 +1,7 @@
-use anyhow::Context;
+ use anyhow::Context;
 use chaosfilter::controller::ebpf::attach_classifier;
 use chaosfilter::controller::pid_cgroup::validate_memory_config;
-use chaosfilter::controller::qdiscs::validate_iface_exists;
+use chaosfilter::controller::qdiscs::{get_default_iface, validate_iface_exists};
 use chaosfilter::controller::{block_delay, pid_cgroup, qdiscs};
 use chaosfilter::plans::{Plan, RunConfigArgs};
 use clap::{Parser, Subcommand};
@@ -10,8 +10,8 @@ use std::{
     path::{Path, PathBuf},
     process,
 };
-use toml_edit::{value, DocumentMut};
 use tokio::signal;
+use toml_edit::{value, DocumentMut};
 
 const CONFIG_TEMPLATE: &str =
     include_str!("../assets/schema_config.toml");
@@ -86,22 +86,39 @@ where
         Commands::Chaos(args) => {
             let plan = Plan::load_from_toml_file(&args.config)?;
 
-            let iface = plan
+            let mut iface = plan
                 .targets
                 .iface
                 .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("targets.iface required for eBPF attach"))?;
+                .ok_or_else(|| anyhow::anyhow!("targets.iface required for eBPF attach"))?
+                .to_string();
 
-            let _ebpf = attach_classifier(iface).await?;
+            if iface == "default" {
+                iface = get_default_iface()
+                    .ok_or_else(|| anyhow::anyhow!("could not determine default interface via `ip route get`"))?;
+            }
 
-            run_plan(&plan)?;
+            if let Some(cgroup) = plan.targets.cgroup.as_deref() {
+                let target_cgroup_id: u64 = cgroup
+                    .parse()
+                    .context("targets.cgroup must be a numeric cgroup id")?;
 
-            println!("Waiting for Ctrl-C...");
-            signal::ctrl_c().await?;
-            println!("Exiting...");
+                let _ebpf = attach_classifier(&iface, &[target_cgroup_id]).await?;
 
-            println!("Chaos Plan Complete.");
-            Ok(())
+                run_plan(&plan)?;
+
+                println!("Waiting for Ctrl-C...");
+                signal::ctrl_c().await?;
+                println!("Exiting...");
+
+                println!("Chaos Plan Complete.");
+                Ok(())
+            } else {
+                run_plan(&plan)?;
+
+                println!("Chaos Plan Complete.");
+                Ok(())
+            }
         }
         /*
         This guy right here.
