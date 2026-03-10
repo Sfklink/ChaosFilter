@@ -1,17 +1,26 @@
-use chaosfilter::plans::{Plan, RunConfigArgs};
+use anyhow::Context;
+use chaosfilter::controller::ebpf::attach_classifier;
 use chaosfilter::controller::pid_cgroup::validate_memory_config;
 use chaosfilter::controller::qdiscs::validate_iface_exists;
 use chaosfilter::controller::{block_delay, pid_cgroup, qdiscs};
+use chaosfilter::plans::{Plan, RunConfigArgs};
 use clap::{Parser, Subcommand};
-use std::{process,fs, path::{Path, PathBuf}};
-use anyhow::Context;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process,
+};
 use toml_edit::{value, DocumentMut};
+use tokio::signal;
 
 const CONFIG_TEMPLATE: &str =
     include_str!("../assets/schema_config.toml");
 
-fn main() {
-    if let Err(e) = entry(std::env::args_os()) {
+#[tokio::main]
+async fn main() {
+    env_logger::init();
+
+    if let Err(e) = entry(std::env::args_os()).await {
         eprintln!("{:#}", e);
         process::exit(1);
     }
@@ -57,7 +66,7 @@ fn main() {
 /// # Panics
 /// This function does not explicitly panic.
 /// Panics may propagate from lower-level modules if not handled.
-pub fn entry<I, T>(args: I) -> anyhow::Result<()>
+pub async fn entry<I, T>(args: I) -> anyhow::Result<()>
 where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
@@ -76,7 +85,20 @@ where
 
         Commands::Chaos(args) => {
             let plan = Plan::load_from_toml_file(&args.config)?;
+
+            let iface = plan
+                .targets
+                .iface
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("targets.iface required for eBPF attach"))?;
+
+            let _ebpf = attach_classifier(iface).await?;
+
             run_plan(&plan)?;
+
+            println!("Waiting for Ctrl-C...");
+            signal::ctrl_c().await?;
+            println!("Exiting...");
 
             println!("Chaos Plan Complete.");
             Ok(())
@@ -125,7 +147,6 @@ pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
 
     Ok(())
 }
-
 
 pub fn output_config(
                     path: &Path,
@@ -188,13 +209,11 @@ pub fn output_config(
         doc["injectors"]["memory_config"]["enabled"] = value(false);
     }
 
-
     fs::write(&abs_path, doc.to_string())
         .with_context(|| format!("failed to write config to {}", abs_path.display()))?;
 
     Ok(abs_path)
 }
-
 
 /// Top-level CLI argument structure.
 ///
@@ -254,11 +273,6 @@ pub enum Commands {
     /// Adding delay command for now will remove later
     Delay(RunConfigArgs),
 }
-
-
-
-
-
 
 #[cfg(test)]
 mod test {
