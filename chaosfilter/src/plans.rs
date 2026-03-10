@@ -66,7 +66,7 @@ pub struct Injectors {
     #[serde(default)]
     pub block_config: BlockConfig,
     #[serde(default)]
-    pub fd_config: FdConfig
+    pub filesystem_config: FileSystemConfig
 }
 
 /// Configuration for the `controller/qdisc.rs` injector.
@@ -137,7 +137,7 @@ pub struct BlockConfig {
 
 /// Configuration for File Descriptor Exhaustion
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct FdConfig {
+pub struct FileSystemConfig {
     /// master enable flag
     #[serde(default)]
     pub enabled: bool,

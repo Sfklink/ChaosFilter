@@ -1,8 +1,8 @@
 use chaosfilter::plans::{Plan, RunConfigArgs};
 use chaosfilter::controller::pid_cgroup::validate_memory_config;
 use chaosfilter::controller::qdiscs::validate_iface_exists;
-use chaosfilter::controller::{block_delay, fd, pid_cgroup, qdiscs};
-use chaosfilter::controller::fd::validate_fd_config;
+use chaosfilter::controller::{block_delay, filesystem, pid_cgroup, qdiscs};
+use chaosfilter::controller::filesystem::{validate_fd_config, FdExhaustConfig};
 use clap::{Parser, Subcommand};
 use std::{process,fs, path::{Path, PathBuf}};
 use anyhow::Context;
@@ -124,11 +124,15 @@ pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
     pid_cgroup::run_plan(plan)?;
     qdiscs::run_plan(plan)?;
     block_delay::run(plan)?;
-    fd::run_plan(plan)?;
 
+    let mut filesystem_injector = FdExhaustConfig::default();
+    filesystem_injector.apply(plan)?;
+
+    std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
+
+    filesystem_injector.revert()?;
     Ok(())
 }
-
 
 pub fn output_config(
                     path: &Path,

@@ -108,7 +108,7 @@ enabled = false
 # -----------------------------
 
 # File Descriptor Injector
-[injectors.fd_config]
+[injectors.filesystem_config]
 enabled = true
 
 # target cgroup is read from [targets.cgroup]

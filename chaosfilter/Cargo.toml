@@ -12,6 +12,7 @@ serde = { workspace = true }
 toml = { workspace = true }
 toml_edit = "0.25.4"
 libc = "0.2"
+tracing = "0.1.44"
 
 [build-dependencies]
 anyhow = { workspace = true }
