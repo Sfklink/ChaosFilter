@@ -30,7 +30,6 @@ pub struct Plan {
     pub injectors: Injectors,
 }
 
-
 impl Plan {
     /// Loads a [`Plan`] from a TOML configuration file.
     ///
@@ -66,6 +65,8 @@ pub struct Injectors {
     pub memory_config: MemoryConfig,
     #[serde(default)]
     pub block_config: BlockConfig,
+    #[serde(default)]
+    pub filesystem_config: FileSystemConfig
 }
 
 /// Configuration for the `controller/qdisc.rs` injector.
@@ -134,7 +135,23 @@ pub struct BlockConfig {
     pub wiops: Option<u64>,
 }
 
+/// Configuration for File Descriptor Exhaustion
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FileSystemConfig {
+    /// master enable flag
+    #[serde(default)]
+    pub enabled: bool,
 
+    /// New soft limit for RLIMIT_NOFILE applied to each PID in the cgroup. (e.g., 32, 64)
+    /// Must be < hard_limit or it will cause issues.
+    #[serde(default)]
+    pub soft_limit: u64,
+
+    /// New hard limit for RLIMIT_NOFILE applied to each PID in the cgroup. (e.g., 128, 256)
+    /// Must be > soft_limit or it will cause issues.
+    #[serde(default)]
+    pub hard_limit: u64,
+}
 
 /// Target selection for chaos execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
