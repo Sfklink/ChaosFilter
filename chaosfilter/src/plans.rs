@@ -175,8 +175,7 @@ pub struct Schedule {
 pub enum CommonCommand {
     Validate(RunConfigArgs),
     Chaos(RunConfigArgs),
-    Init,
-    Delay(RunConfigArgs),
+    Init
 }
 
 #[derive(Debug, Clone, Args)]
