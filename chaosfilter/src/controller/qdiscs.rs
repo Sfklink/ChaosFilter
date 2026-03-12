@@ -11,9 +11,9 @@ use std::process::{Command, Stdio};
 ///
 /// Tracks whether chaos was applied so `revert` can be idempotent.
 ///
-/// THIS IS A PROBLEM.
-/// Here, we are making the mistake of supplying domain logic to itself internally, we don't like that.
-/// It takes in arguments, it does the thing.  Right now, this stinks, and is not testable.
+// THIS IS A PROBLEM.
+// Here, we are making the mistake of supplying domain logic to itself internally, we don't like that.
+// It takes in arguments, it does the thing.  Right now, this stinks, and is not testable.
 #[derive(Default)]
 pub struct NetworkConfig {
     applied: bool,
@@ -59,6 +59,8 @@ impl NetworkConfig {
     ///
     /// # Panics
     /// This function does not explicitly panic.
+    ///
+
     pub fn show_qdisc_state(iface: &str) {
         match Command::new("tc")
             .args(["qdisc", "show", "dev", iface])
@@ -112,13 +114,14 @@ impl NetworkConfig {
         let loss = format!("{loss_percent}%");
 
         let root_status = Command::new("tc")
-            .args(["qdisc", "replace", "dev", iface, "root", "handle", "1:", "prio", "bands",
-        "2",
-        "priomap",
-        "0", "0", "0", "0",
-        "0", "0", "0", "0",
-        "0", "0", "0", "0",
-        "0", "0", "0", "0",])
+            .args([
+                "qdisc", "replace", "dev", iface, "root", "handle", "1:", "prio", "bands",
+                "2",
+                "priomap",
+                "0", "0", "0", "0",
+                "0", "0", "0", "0",
+                "0", "0", "0", "0",
+                "0", "0", "0", "0",])
             .status()
             .context("failed to execute tc (root prio)")?;
 
