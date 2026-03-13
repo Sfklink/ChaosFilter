@@ -10,7 +10,6 @@ use aya_ebpf::{
 };
 use aya_log_ebpf::info;
 
-const CHAOS_MARK: u32 = 1;
 
 #[map]
 static TARGET_CGROUPS: HashMap<u64, u8> = HashMap::with_max_entries(1024, 0);
