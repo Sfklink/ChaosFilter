@@ -370,9 +370,9 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plans::{Injectors, Plan, Schedule, Targets};
-    use chaosfilter_common::{MemoryConfig as CliMemCfg, NetworkConfig as CliNetCfg};
+
     use tempfile::TempDir;
+    use crate::plans::{Injectors, MemoryConfig as MemCfg, NetworkConfig as NetCfg, Schedule, Targets};
 
     fn base_plan() -> Plan {
         Plan {
@@ -383,9 +383,10 @@ mod tests {
             },
             schedule: Schedule { duration_s: 0 },
             injectors: Injectors {
-                network_config: CliNetCfg::default(),
-                memory_config: CliMemCfg::default(),
+                network_config: NetCfg::default(),
+                memory_config: MemCfg::default(),
                 block_config: Default::default(),
+                ebpf_config: Default::default(),
             },
         }
     }
