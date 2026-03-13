@@ -13,19 +13,38 @@ pub struct EbpfHandle {
 
 
 
+/*
+  So this doesn't belong here, it was in main.rs, but I need to go to bed.  .
+  I am committing just comments.
+
+  This belongs in qdiscs.rs, or at least to as something called there.
+  Easiest way to check this is something
+    if plan.injectors.network_config.network_ebpf_cgroup:
+        attach_classifier(plan.injectors.network_config.iface,
+                         plan.injectors.network_config.network_ebpf_cgroup)
+
+ */
 // if let Some(cgroup) = plan.targets.cgroup.as_deref() {
 //     let target_cgroup_id: u64 = cgroup
 //         .parse()
 //         .context("targets.cgroup must be a numeric cgroup id")?;
-//
 //     let _ebpf = attach_classifier(&iface, &[target_cgroup_id]).await?;
 
+/*
 
+Writing these so  I get a better idea of how this is supposed to go.
+Set an rlimit
+ */
 pub async fn attach_classifier(iface: &str, target_cgroup_ids: &[u64]) -> Result<EbpfHandle> {
+    /*
+    https://www.man7.org/linux/man-pages/man2/getrlimit.2.html
+    Why don't we just functionalize this section for ebpf-cgroup manipulation
+     */
     let rlim = libc::rlimit {
         rlim_cur: libc::RLIM_INFINITY,
         rlim_max: libc::RLIM_INFINITY,
     };
+
     let ret = unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlim) };
     if ret != 0 {
         debug!("remove limit on locked memory failed, ret is: {ret}");
@@ -68,9 +87,11 @@ pub async fn attach_classifier(iface: &str, target_cgroup_ids: &[u64]) -> Result
                 .with_context(|| format!("failed to insert target cgroup id {id}"))?;
         }
     }
-
     let _ = tc::qdisc_add_clsact(iface);
 
+    /*
+    ah gotcha so here's where we're actually calling the thing in chaosfilter-ebpf
+     */
     let program: &mut SchedClassifier = ebpf
         .program_mut("chaosfilter")
         .context("failed to find eBPF program named `chaosfilter`")?
