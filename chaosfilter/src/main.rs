@@ -147,12 +147,6 @@ where
 
             Ok(())
         }
-
-        Commands::Delay(args) => {
-            let plan = Plan::load_from_toml_file(&args.config)?;
-            run_plan(&plan)?;
-            Ok(())
-        }
     }
 }
 
@@ -286,9 +280,6 @@ pub enum Commands {
         #[arg(value_name = "IFACE")]
         iface_pos: Option<String>,
     },
-
-    /// Adding delay command for now will remove later
-    Delay(RunConfigArgs),
 }
 
 #[cfg(test)]
