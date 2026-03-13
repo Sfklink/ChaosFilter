@@ -3,7 +3,7 @@ use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-
+use crate::controller::qdiscs::get_default_iface;
 /*
 Most likely going to add scheduler in here so we can fire sequentially.  Just has to deal with
 sequencing and variable intake.
@@ -51,6 +51,18 @@ impl Plan {
             .with_context(|| format!("failed to read config file: {}", path.display()))?;
         let plan: Plan = toml::from_str(&s)
             .with_context(|| format!("failed to parse TOML in: {}", path.display()))?;
+
+        let mut iface = plan
+            .targets
+            .iface
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("targets.iface required for eBPF attach"))?
+            .to_string();
+
+        if iface == "default" {
+            iface = get_default_iface()
+                .ok_or_else(|| anyhow::anyhow!("could not determine default interface via `ip route get`"))?;
+        }
         Ok(plan)
     }
 }

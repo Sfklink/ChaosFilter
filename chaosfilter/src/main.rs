@@ -86,17 +86,6 @@ where
         Commands::Chaos(args) => {
             let plan = Plan::load_from_toml_file(&args.config)?;
 
-            let mut iface = plan
-                .targets
-                .iface
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("targets.iface required for eBPF attach"))?
-                .to_string();
-
-            if iface == "default" {
-                iface = get_default_iface()
-                    .ok_or_else(|| anyhow::anyhow!("could not determine default interface via `ip route get`"))?;
-            }
 
             if let Some(cgroup) = plan.targets.cgroup.as_deref() {
                 let target_cgroup_id: u64 = cgroup
