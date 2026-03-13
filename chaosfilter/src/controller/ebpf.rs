@@ -11,6 +11,16 @@ pub struct EbpfHandle {
     _ebpf: Ebpf,
 }
 
+
+
+// if let Some(cgroup) = plan.targets.cgroup.as_deref() {
+//     let target_cgroup_id: u64 = cgroup
+//         .parse()
+//         .context("targets.cgroup must be a numeric cgroup id")?;
+//
+//     let _ebpf = attach_classifier(&iface, &[target_cgroup_id]).await?;
+
+
 pub async fn attach_classifier(iface: &str, target_cgroup_ids: &[u64]) -> Result<EbpfHandle> {
     let rlim = libc::rlimit {
         rlim_cur: libc::RLIM_INFINITY,

@@ -76,6 +76,11 @@ where
     match cli.command {
         Commands::Validate(args) => {
             let plan = Plan::load_from_toml_file(&args.config)?;
+            /*
+            Something similar here as below.  individually called validation doesn't make sense.
+            We can implement validate just like apply, accessing the same vector,
+            and for each injector, run validate() on it.
+             */
             validate_memory_config(&plan)?;
             validate_iface_exists(plan.targets.iface.as_deref())?;
 
@@ -86,28 +91,22 @@ where
         Commands::Chaos(args) => {
             let plan = Plan::load_from_toml_file(&args.config)?;
 
-
-            if let Some(cgroup) = plan.targets.cgroup.as_deref() {
-                let target_cgroup_id: u64 = cgroup
-                    .parse()
-                    .context("targets.cgroup must be a numeric cgroup id")?;
-
-                let _ebpf = attach_classifier(&iface, &[target_cgroup_id]).await?;
-
+            /*
+                run_plan() can still live here for now, we should rename it to something like
+                apply_injectors(), removing revert() functionality from each run_plan() function
+             */
                 run_plan(&plan)?;
 
                 println!("Waiting for Ctrl-C...");
                 signal::ctrl_c().await?;
-                println!("Exiting...");
+
+                println!("Reverting...");
+            /*
+                and here is where revert_injectors() will go.
+            */
 
                 println!("Chaos Plan Complete.");
                 Ok(())
-            } else {
-                run_plan(&plan)?;
-
-                println!("Chaos Plan Complete.");
-                Ok(())
-            }
         }
         /*
         This guy right here.
