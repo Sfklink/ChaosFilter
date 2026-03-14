@@ -31,7 +31,7 @@ struct SavedLimitConfig {
 
 /// Tracker for the cgroup so what was applied can be undone with `revert`
 #[derive(Default)]
-pub struct FdExhaustConfig {
+pub struct FilesystemInjector {
     applied: bool,
     saved: Vec<SavedLimitConfig>
 }
@@ -76,7 +76,7 @@ pub fn validate_fd_config(plan: &Plan) -> Result<()> {
     Ok(())
 }
 
-impl FdExhaustConfig {
+impl FilesystemInjector {
     /// Apply reduced `RLIMIT_NOFILE` to every PID in the target cgroup
     ///
     /// # Errors
@@ -184,7 +184,7 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 
     validate_fd_config(plan)?;
 
-    let mut injector = FdExhaustConfig::default();
+    let mut injector = FilesystemInjector::default();
     injector.apply(plan)?;
     injector.revert()?;
 
@@ -275,7 +275,7 @@ fn set_rlimit_nofile(pid: u32, soft: u64, hard: u64) -> Result<()> {
 mod tests {
     use super::*;
     use crate::plans::{
-        BlockConfig, FdConfig, Injectors, MemoryConfig as CliMemCfg,
+        BlockConfig, FileSystemConfig, Injectors, MemoryConfig as CliMemCfg,
         NetworkConfig as CliNetCfg, Plan, Schedule, Targets
     };
     use std::fs;
@@ -293,7 +293,7 @@ mod tests {
                 network_config: CliNetCfg::default(),
                 memory_config: CliMemCfg::default(),
                 block_config: BlockConfig::default(),
-                fd_config: FdConfig::default(),
+                filesystem_config: FileSystemConfig::default(),
             },
         }
     }
@@ -376,9 +376,9 @@ mod tests {
     fn validate_fd_config_error_enabled_no_cgroup() {
         let mut plan = base_plan();
 
-        plan.injectors.fd_config.enabled = true;
-        plan.injectors.fd_config.soft_limit = 64;
-        plan.injectors.fd_config.hard_limit = 64;
+        plan.injectors.filesystem_config.enabled = true;
+        plan.injectors.filesystem_config.soft_limit = 64;
+        plan.injectors.filesystem_config.hard_limit = 64;
 
         let err = validate_fd_config(&plan).unwrap_err().to_string();
         assert!(err.contains("requires targets.cgroup"));
@@ -388,9 +388,9 @@ mod tests {
     fn validate_fd_config_error_cgroup_missing() {
         let mut plan = base_plan();
 
-        plan.injectors.fd_config.enabled = true;
-        plan.injectors.fd_config.soft_limit = 64;
-        plan.injectors.fd_config.hard_limit = 64;
+        plan.injectors.filesystem_config.enabled = true;
+        plan.injectors.filesystem_config.soft_limit = 64;
+        plan.injectors.filesystem_config.hard_limit = 64;
         plan.targets.cgroup = Some("/nonexistent/cgroup/path".to_string());
 
         let err = validate_fd_config(&plan).unwrap_err().to_string();
@@ -402,9 +402,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut plan = base_plan();
 
-        plan.injectors.fd_config.enabled = true;
-        plan.injectors.fd_config.soft_limit = 200;
-        plan.injectors.fd_config.hard_limit = 100;
+        plan.injectors.filesystem_config.enabled = true;
+        plan.injectors.filesystem_config.soft_limit = 200;
+        plan.injectors.filesystem_config.hard_limit = 100;
         plan.targets.cgroup = Some(dir.path().to_str().unwrap().to_string());
 
         let err = validate_fd_config(&plan).unwrap_err().to_string();
@@ -416,9 +416,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut plan = base_plan();
 
-        plan.injectors.fd_config.enabled = true;
-        plan.injectors.fd_config.soft_limit = 64;
-        plan.injectors.fd_config.hard_limit = 64;
+        plan.injectors.filesystem_config.enabled = true;
+        plan.injectors.filesystem_config.soft_limit = 64;
+        plan.injectors.filesystem_config.hard_limit = 64;
         plan.targets.cgroup = Some(dir.path().to_str().unwrap().to_string());
 
         validate_fd_config(&plan).unwrap();
@@ -426,14 +426,14 @@ mod tests {
 
     #[test]
     fn not_applied_when_disabled() {
-        let mut injector = FdExhaustConfig::default();
+        let mut injector = FilesystemInjector::default();
         injector.apply(&base_plan()).unwrap();
         assert!(!injector.applied);
     }
 
     #[test]
     fn no_reverted_when_not_applied() {
-        let mut injector = FdExhaustConfig::default();
+        let mut injector = FilesystemInjector::default();
         injector.revert().unwrap();
     }
 }
