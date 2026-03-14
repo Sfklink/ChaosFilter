@@ -6,6 +6,7 @@
 use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::process::{Command, Stdio};
+use tracing::{debug, error, info, warn};
 
 /// tc netem injector state.
 ///
@@ -69,8 +70,16 @@ impl NetworkConfig {
             .status()
         {
             Ok(status) if status.success() => {}
-            Ok(status) => eprintln!("[qdisc] warning: tc qdisc show exited {}", status),
-            Err(e) => eprintln!("[qdisc] warning: failed to run tc qdisc show: {}", e),
+            Ok(status) => warn!(
+                iface,
+                exit_code = %status,
+                "tc qdisc show exited non-zero"
+            ),
+            Err(e) => warn!(
+                iface,
+                error = %e,
+                "failed to run tc qdisc show"
+            ),
         }
     }
 
@@ -105,9 +114,11 @@ impl NetworkConfig {
         let delay_ms = plan.injectors.network_config.delay_ms;
         let loss_percent = plan.injectors.network_config.loss_percent;
 
-        println!(
-            "[qdisc] applying netem to {} (delay={}ms loss={}%)",
-            iface, delay_ms, loss_percent
+        info!(
+            iface,
+            delay_ms,
+            loss_percent,
+            "applying netem qdisc"
         );
 
         let delay = format!("{delay_ms}ms");
@@ -163,13 +174,19 @@ impl NetworkConfig {
 
         match status {
             Ok(s) if s.success() => {
-                println!("Root qdisc applied successfully to '{}'", iface);
+                info!("root qdisc applied successfully");
             }
             Ok(_) => {
-                println!("ERROR: failed to apply root qdisc on '{}'", iface);
+                error!(
+                    iface,
+                    "failed to apply root qdisc"
+                );
             }
             Err(e) => {
-                println!("ERROR: failed to execute tc: {}", e);
+                error!(
+                    error = %e,
+                    "failed to execute tc"
+                );
             }
         }
     }
@@ -248,7 +265,7 @@ impl NetworkConfig {
     /// May panic if internal state is inconsistent (uses `unwrap()` on `self.iface`).
     pub fn revert(&mut self) -> Result<()> {
         if !self.applied {
-            println!("[qdisc] nothing applied; skipping revert");
+            debug!("nothing applied; skipping revert");
             return Ok(());
         }
 
@@ -298,16 +315,22 @@ impl NetworkConfig {
 
         match status {
             Ok(s) if s.success() => {
-                println!("Root qdisc deleted successfully from '{}'", iface);
+                info!(
+                    iface, 
+                    "root qdisc deleted successfully"
+                );
             }
             Ok(_) => {
-                println!(
-                    "ERROR: failed to delete root qdisc from '{}' (there may not be one)",
-                    iface
+                error!(
+                    iface,
+                    "failed to delete root qdisc from (there may not be one)"
                 );
             }
             Err(e) => {
-                println!("ERROR: failed to execute tc: {}", e);
+                error!(
+                    error = %e,
+                    "failed to execute tc"
+                );
             }
         }
     }
@@ -382,7 +405,10 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
         std::process::exit(130);
     })?;
 
-    println!("Holding chaos for {} seconds.", plan.schedule.duration_s);
+    info!(
+        duration_s = plan.schedule.duration_s,
+        "holding chaos...."
+    );
 
     // Ping using resolved iface (NOT plan.targets.iface)
     let chaos_stats = run_ping_test_with_iface(iface_str, plan.schedule.duration_s, ping_target)
@@ -520,6 +546,18 @@ pub fn print_comparison(
     //control: &PingStats,
     modified: &PingStats,
 ) -> String {
+    info!(
+        iface,
+        duration_s = duration,
+        transmitted = modified.transmitted,
+        received = modified.received,
+        loss_pct = modified.loss_pct,
+        rtt_min = modified.rtt_min,
+        rtt_avg = modified.rtt_avg,
+        rtt_max = modified.rtt_max,
+        "chaos ping results"
+    );
+
     let output = format!(
         "\n===== Network Comparison (Duration: {duration} seconds) =====
 

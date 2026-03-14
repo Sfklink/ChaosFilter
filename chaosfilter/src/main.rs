@@ -1,17 +1,23 @@
 use chaosfilter::plans::{Plan, RunConfigArgs};
 use chaosfilter::controller::pid_cgroup::validate_memory_config;
 use chaosfilter::controller::qdiscs::validate_iface_exists;
-use chaosfilter::controller::{block_delay, filesystem, pid_cgroup, qdiscs};
+use chaosfilter::controller::{block_delay, pid_cgroup, qdiscs};
 use chaosfilter::controller::filesystem::{validate_fd_config, FdExhaustConfig};
 use clap::{Parser, Subcommand};
 use std::{process,fs, path::{Path, PathBuf}};
 use anyhow::Context;
 use toml_edit::{value, DocumentMut};
+use tracing::{debug, info};
 
 const CONFIG_TEMPLATE: &str =
     include_str!("../assets/schema_config.toml");
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        ).init();
+
     if let Err(e) = entry(std::env::args_os()) {
         eprintln!("{:#}", e);
         process::exit(1);
@@ -134,7 +140,12 @@ pub fn output_config(
                     pid: Option<u32>,
                     interface: Option<&str>,
                     ) -> anyhow::Result<PathBuf> {
-    eprintln!("init args => pid={pid:?}, iface={interface:?}, force={force}");
+    debug!(
+        pid = ?pid,
+        iface = ?interface,
+        force,
+        "init args"
+    );
     // check current directory path because relative sucks and is difficult, but I think this may
     // not be absolutely necessary, just dont run init as root.
     // If it's relative, make it relative to the current working directory.
@@ -164,14 +175,14 @@ pub fn output_config(
     if let Some(iface) = interface {
         doc["injectors"]["network_config"]["enabled"] = value(true);
         doc["injectors"]["network_config"]["target_iface"] = value(iface);
-        println!("  network injector enabled (iface={})", iface);
+        info!(iface, "network injector enabled");
         // set iface
         if doc["targets"]["iface"].is_none() {
             doc["targets"]["iface"] = value(iface);
         } else {
             doc["targets"]["iface"] = value(iface);
         }
-    }else{
+    } else {
         doc["injectors"]["network_config"]["enabled"] = value(false);
         doc["injectors"]["network_config"]["target_iface"] = value("default");
 
@@ -181,8 +192,12 @@ pub fn output_config(
         doc["targets"]["cgroup"] = value(p.to_string());
         doc["injectors"]["memory_config"]["target_pid"] = value(p.to_string());
         doc["injectors"]["memory_config"]["enabled"] = value(true);
-        println!("  memory injector enabled (pid={})", p);
-    }else {
+        info!(
+            pid = p, 
+            "memory injector enabled"
+        );
+
+    } else {
         doc["injectors"]["memory_config"]["target_pid"] = value(0);
         doc["targets"]["cgroup"] = value(0);
 

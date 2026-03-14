@@ -10,6 +10,7 @@ use std::thread;
 use std::time::Duration;
 use std::process::Command;
 use std::time::Instant;
+use tracing::{debug, info, warn};
 
 fn major_minor(device_path: &str) -> Result<String> {
     let path = Path::new(device_path);
@@ -32,15 +33,11 @@ fn io_enabled() -> Result<()> {
     let subtree = fs::read_to_string(root_subtree)?;
 
     if !subtree.contains("io") {
-        let msg = format!(
-            "WARNING: IO controller is not enabled.\n\n\
-             Run this once after boot:\n\
-             sudo sh -c 'echo +io > {}'\n\n\
-             Then rerun ChaosFilter.",
+        warn!(
+            subtree_path = %root_subtree.display(),
+            "IO controller is not enabled; run: sudo sh -c 'echo +io > {}'",
             root_subtree.display()
         );
-
-        println!("{}", msg);
         bail!("IO controller not enabled");
     }
 
@@ -49,7 +46,7 @@ fn io_enabled() -> Result<()> {
 
 // simple disk speed test (control vs experimental)
 fn run_disk_test(label: &str) -> Result<f64> {
-    println!("Running {} test...", label);
+    info!(label, "starting disk test");
 
     let start = Instant::now();
 
@@ -64,9 +61,11 @@ fn run_disk_test(label: &str) -> Result<f64> {
     let mb_written = 200.0;
     let mbps = mb_written / duration;
 
-    println!(
-        "{} test completed in {:.2} sec ({:.2} MB/s)",
-        label, duration, mbps
+    info!(
+        label,
+        duration_s = duration,
+        throughput_mbps = mbps,
+        "disk test complete"
     );
 
     // cleanup test file
@@ -81,7 +80,6 @@ pub fn run(plan: &Plan) -> Result<()> {
     let cfg = &plan.injectors.block_config;
 
     if !cfg.enabled {
-        println!("Block delay injector not enabled in config.");
         return Ok(());
     }
 
@@ -89,18 +87,27 @@ pub fn run(plan: &Plan) -> Result<()> {
 
     let device = cfg.device.as_ref().expect("Device must be specified");
     let major_minor = major_minor(device)?;
-    println!("Resolved device {} --> {}", device, major_minor);
+    info!(
+        device,
+        major_minor,
+        "resolved block device"
+    );
 
     let base_path = Path::new("/sys/fs/cgroup/chaosfilter");
     let cgroup_path = base_path.join(&plan.name);
-    println!("Creating cgroup at {:?}", cgroup_path);
+    info!(
+        cgroup = ?cgroup_path, "creating cgroup"  
+    );
 
     if !base_path.exists() {
         fs::create_dir(base_path)?;
-        println!("Created base chaosfilter cgroup directory");
+        info!("created base chaosfilter cgroup directory");
     }
 
-    println!("Checking controller availability in {:?}", base_path);
+    debug!(
+        base = ?base_path, 
+        "checking controller availability"
+    );
 
     let chaos_subtree = base_path.join("cgroup.subtree_control");
 
@@ -108,27 +115,35 @@ pub fn run(plan: &Plan) -> Result<()> {
         let content = fs::read_to_string(&chaos_subtree)?;
 
         if !content.contains("io") {
-            println!("Enabling io controller in chaosfilter subtree...");
+            info!("enabling io controller in chaosfilter subtree...");
 
             let mut file = fs::OpenOptions::new().write(true).open(&chaos_subtree)?;
 
             file.write_all(b"+io")?;
         }
     } else {
-        println!("WARNING: chaosfilter subtree_control not available yet");
+        warn!("chaosfilter subtree_control not available yet");
     }
 
     if !cgroup_path.exists() {
         fs::create_dir(&cgroup_path)?;
-        println!("Created plan cgroup directory");
+        info!(
+            cgroup = ?cgroup_path,
+            "created plan cgroup directory"
+        );
     } else {
-        println!("Plan cgroup already exists");
+        debug!(
+            cgroup = ?cgroup_path,
+            "plan cgroup already exists"
+        );
     }
 
     let io_max = cgroup_path.join("io.max");
     if !io_max.exists() {
-        println!("WARNING: io.max not found at {:?}", io_max);
-        println!("The io controller may not be enabled.");
+        warn!(
+            path = ?io_max,
+            "io.max not found; the io controller may not be enabled"
+        );
         return Ok(());
     }
 
@@ -139,11 +154,17 @@ pub fn run(plan: &Plan) -> Result<()> {
     let self_pid = std::process::id();
     let procs_path = cgroup_path.join("cgroup.procs");
     fs::write(&procs_path, self_pid.to_string())?;
-    println!("Moved current process (PID {}) into cgroup", self_pid);
+    info!(
+        pid = self_pid, 
+        cgroup = ?cgroup_path, 
+        "moved current process into cgroup"
+    );
 
     let current = fs::read_to_string(&io_max)?;
-    println!("Current io.max contents:");
-    println!("{}", current);
+    debug!(
+        contents = current.trim(), 
+        "current io.max"
+    );
 
     let mut rule = format!("{}", major_minor);
 
@@ -161,8 +182,10 @@ pub fn run(plan: &Plan) -> Result<()> {
         rule.push_str(&format!(" wiops={}", wiops));
     }
 
-    println!("Throttle rule stats:");
-    println!("{}", rule);
+    debug!(
+        rule, 
+        "applying throttle rule"
+    );
 
     // throttle application hell yeah
     {
@@ -170,24 +193,34 @@ pub fn run(plan: &Plan) -> Result<()> {
         file.write_all(rule.as_bytes())?;
     }
 
-    println!("Throttling delay for {} secs. Please hold...", plan.schedule.duration_s);
+    info!(
+        duration_s = plan.schedule.duration_s, 
+        "throttling; holding"
+    );
     thread::sleep(Duration::from_secs(1)); // short settle time
 
     // EXPERIMENTAL RUN
     let experimental_speed = run_disk_test("EXPERIMENTAL")?;
 
     // take it back now yall
-    println!("Restoring original io.max. Please hold...");
+    info!("restoring original io.max");
     {
         let mut file = fs::OpenOptions::new().write(true).open(&io_max)?;
         file.write_all(current.as_bytes())?;
     }
 
-    println!("Cgroup throttling all done and undone.");
+    info!("block throttling applied and reverted.");
 
     // RESULTS
     let drop = control_speed - experimental_speed;
     let percent = (drop / control_speed) * 100.0;
+
+    info!(
+        control_mbps = control_speed,
+        experimental_mbps = experimental_speed,
+        drop_pct = percent,
+        "block IO throttle results"
+    );
 
     let results = format!(
         "\n========== RESULTS ==========\n\
