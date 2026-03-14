@@ -3,6 +3,7 @@
 //! Creates/uses a target cgroup, optionally moves a PID into it, writes cpu/memory knobs,
 //! and can revert by restoring previous knob values (best effort).
 
+use crate::controller::Injector;
 use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::{
@@ -243,6 +244,24 @@ impl MemoryConfig {
 
         self.applied = false;
         Ok(())
+    }
+}
+// lets MemoryConfig be used as a shared injector in main.rs
+impl crate::controller::Injector for MemoryConfig {
+    fn name(&self) -> &'static str {
+        "memory"
+    }
+    // starts the memory injector
+    fn apply(&mut self, plan: &crate::plans::Plan) -> anyhow::Result<()> {
+        MemoryConfig::apply(self, plan)
+    }
+    // undoes the memory injector
+    fn revert(&mut self) -> anyhow::Result<()> {
+        MemoryConfig::revert(self)
+    }
+    // checks that the memory injector config is valid before running
+    fn validate(&self, plan: &crate::plans::Plan) -> anyhow::Result<()> {
+        validate_memory_config(plan)
     }
 }
 
