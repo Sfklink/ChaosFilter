@@ -109,14 +109,14 @@ enabled = false
 
 # File Descriptor Injector
 [injectors.filesystem_config]
-enabled = true
+enabled = false
 
 # target cgroup is read from [targets.cgroup]
 # Every PID in that cgroup will have it's RLIMIT_NOFILE's
 # soft_limit and hard_limit lowered for the duration specified
 
 # What the soft limit will be lowered too (do not set too low)
-soft_limit = 2
+# soft_limit = 2
 
 # What the hard limit will be lowered too (do not set too low)
-hard_limit = 4
+# hard_limit = 4
