@@ -1,9 +1,4 @@
 use anyhow::Context;
-use chaosfilter::controller::ebpf::attach_classifier;
-use chaosfilter::controller::pid_cgroup::validate_memory_config;
-use chaosfilter::controller::qdiscs::{get_default_iface, validate_iface_exists};
-// brings in the injector system so main can build a list of injectors,
-// start them, and clean them up later
 use chaosfilter::controller::{build_injectors, validate_injectors};
 use chaosfilter::plans::{Plan, RunConfigArgs};
 use clap::{Parser, Subcommand};
@@ -86,7 +81,7 @@ where
             //validate_memory_config(&plan)?;
             //validate_iface_exists(plan.targets.iface.as_deref())?;
             //check each enabled injector in config
-            validate_injectors(&plan)?
+            validate_injectors(&plan)?;
 
             println!("Config OK.");
             Ok(())
@@ -99,25 +94,26 @@ where
                 run_plan() can still live here for now, we should rename it to something like
                 apply_injectors(), removing revert() functionality from each run_plan() function
              */
-                //Builds list of enabled injectors
-                let mut active_injectors = build_injectors(&plan)?;
-                
-                //Start injectors
-                for injector in active_injectors.iter_mut() {
-                    println!("starting {}", injector.name());
-                    injector.apply(&plan)?;
+            //Builds list of enabled injectors
+            let mut active_injectors = build_injectors(&plan)?;
 
-                println!("Waiting for Ctrl-C...");
-                signal::ctrl_c().await?;
+            //Start injectors
+            for injector in active_injectors.iter_mut() {
+                println!("starting {}", injector.name());
+                injector.apply(&plan)?;
+            }
 
-                //undo the injectors in reverse order
-                println!("Reverting...");
-                for injector in active_injectors.iter_mut().rev() {
-                    injector.revert()?;
-                }
+            println!("Waiting for Ctrl-C...");
+            signal::ctrl_c().await?;
 
-                println!("Chaos Plan Complete.");
-                Ok(())
+            //undo the injectors in reverse order
+            println!("Reverting...");
+            for injector in active_injectors.iter_mut().rev() {
+                injector.revert()?;
+            }
+
+            println!("Chaos Plan Complete.");
+            Ok(())
         }
         /*
         This guy right here.
@@ -149,21 +145,12 @@ where
     }
 }
 
-pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
-    // Each module should early-return Ok(()) when its injector is disabled.
-    pid_cgroup::run_plan(plan)?;
-    qdiscs::run_plan(plan)?;
-    block_delay::run(plan)?;
-
-    Ok(())
-}
-
 pub fn output_config(
-                    path: &Path,
-                    force: bool,
-                    pid: Option<u32>,
-                    interface: Option<&str>,
-                    ) -> anyhow::Result<PathBuf> {
+    path: &Path,
+    force: bool,
+    pid: Option<u32>,
+    interface: Option<&str>,
+) -> anyhow::Result<PathBuf> {
     eprintln!("init args => pid={pid:?}, iface={interface:?}, force={force}");
     // check current directory path because relative sucks and is difficult, but I think this may
     // not be absolutely necessary, just dont run init as root.
@@ -182,7 +169,7 @@ pub fn output_config(
         );
     }
 
-// yay
+    // yay
     let mut doc: DocumentMut = CONFIG_TEMPLATE
         .parse::<DocumentMut>()
         .context("embedded config template is invalid TOML")?;
@@ -201,10 +188,9 @@ pub fn output_config(
         } else {
             doc["targets"]["iface"] = value(iface);
         }
-    }else{
+    } else {
         doc["injectors"]["network_config"]["enabled"] = value(false);
         doc["injectors"]["network_config"]["target_iface"] = value("default");
-
     }
     // If pid provided: set target_pid + enable memory injector
     if let Some(p) = pid {
@@ -212,7 +198,7 @@ pub fn output_config(
         doc["injectors"]["memory_config"]["target_pid"] = value(p.to_string());
         doc["injectors"]["memory_config"]["enabled"] = value(true);
         println!("  memory injector enabled (pid={})", p);
-    }else {
+    } else {
         doc["injectors"]["memory_config"]["target_pid"] = value(0);
         doc["targets"]["cgroup"] = value(0);
 

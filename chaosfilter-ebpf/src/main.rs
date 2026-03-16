@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+use chaosfilter_common::CHAOS_MARK;
 use aya_ebpf::{
     bindings::{TC_ACT_OK, TC_ACT_RECLASSIFY},
     helpers::bpf_get_current_cgroup_id,

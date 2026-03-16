@@ -2,7 +2,6 @@
 //!
 //! Applies a root `netem` qdisc to the configured network interface and restores
 //! a known-good baseline on revert.
-use crate::controller::Injector;
 use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::process::{Command, Stdio};
@@ -339,7 +338,8 @@ impl NetworkConfig {
             }
         }
     }
-    // makes NetworkConfig follow the common injector interface
+}    
+// makes NetworkConfig follow the common injector interface
 impl crate::controller::Injector for NetworkConfig {
     // name used when printing which injector is running
     fn name(&self) -> &'static str {

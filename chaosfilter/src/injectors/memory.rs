@@ -3,7 +3,6 @@
 //! Creates/uses a target cgroup, optionally moves a PID into it, writes cpu/memory knobs,
 //! and can revert by restoring previous knob values (best effort).
 
-use crate::controller::Injector;
 use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::{
