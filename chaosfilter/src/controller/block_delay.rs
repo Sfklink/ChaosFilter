@@ -215,13 +215,6 @@ pub fn run(plan: &Plan) -> Result<()> {
     let drop = control_speed - experimental_speed;
     let percent = (drop / control_speed) * 100.0;
 
-    info!(
-        control_mbps = control_speed,
-        experimental_mbps = experimental_speed,
-        drop_pct = percent,
-        "block IO throttle results"
-    );
-
     let results = format!(
         "\n========== RESULTS ==========\n\
         Control Speed:      {:.2} MB/s\n\

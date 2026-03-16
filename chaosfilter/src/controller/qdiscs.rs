@@ -546,18 +546,6 @@ pub fn print_comparison(
     //control: &PingStats,
     modified: &PingStats,
 ) -> String {
-    info!(
-        iface,
-        duration_s = duration,
-        transmitted = modified.transmitted,
-        received = modified.received,
-        loss_pct = modified.loss_pct,
-        rtt_min = modified.rtt_min,
-        rtt_avg = modified.rtt_avg,
-        rtt_max = modified.rtt_max,
-        "chaos ping results"
-    );
-
     let output = format!(
         "\n===== Network Comparison (Duration: {duration} seconds) =====
 
