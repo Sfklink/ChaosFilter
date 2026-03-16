@@ -1,5 +1,5 @@
 use crate::plans::Plan;
-//use crate::controller;
+//use crate::injector;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
@@ -33,7 +33,7 @@ fn io_enabled() -> Result<()> {
 
     if !subtree.contains("io") {
         let msg = format!(
-            "WARNING: IO controller is not enabled.\n\n\
+            "WARNING: IO injector is not enabled.\n\n\
              Run this once after boot:\n\
              sudo sh -c 'echo +io > {}'\n\n\
              Then rerun ChaosFilter.",
@@ -41,7 +41,7 @@ fn io_enabled() -> Result<()> {
         );
 
         println!("{}", msg);
-        bail!("IO controller not enabled");
+        bail!("IO injector not enabled");
     }
 
     Ok(())
@@ -100,7 +100,7 @@ pub fn run(plan: &Plan) -> Result<()> {
         println!("Created base chaosfilter cgroup directory");
     }
 
-    println!("Checking controller availability in {:?}", base_path);
+    println!("Checking injector availability in {:?}", base_path);
 
     let chaos_subtree = base_path.join("cgroup.subtree_control");
 
@@ -108,7 +108,7 @@ pub fn run(plan: &Plan) -> Result<()> {
         let content = fs::read_to_string(&chaos_subtree)?;
 
         if !content.contains("io") {
-            println!("Enabling io controller in chaosfilter subtree...");
+            println!("Enabling io injector in chaosfilter subtree...");
 
             let mut file = fs::OpenOptions::new().write(true).open(&chaos_subtree)?;
 
@@ -128,7 +128,7 @@ pub fn run(plan: &Plan) -> Result<()> {
     let io_max = cgroup_path.join("io.max");
     if !io_max.exists() {
         println!("WARNING: io.max not found at {:?}", io_max);
-        println!("The io controller may not be enabled.");
+        println!("The io injector may not be enabled.");
         return Ok(());
     }
 

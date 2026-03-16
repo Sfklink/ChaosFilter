@@ -17,13 +17,13 @@ cgroup = "6687"
 [schedule]
 duration_s = 120
 
-# This is the injector for qdiscs.rs
+# This is the injector for network
 [injectors.network_config]
 enabled = false
 delay_ms = 100
 loss_percent = 50.0
 
-# This is the pid_cgroup.rs section.
+# This is the cpu-memory section.
 # Best tested with the following:
 #
 #sleep 600 &

@@ -60,7 +60,6 @@ impl NetworkConfig {
     /// # Panics
     /// This function does not explicitly panic.
     ///
-
     pub fn show_qdisc_state(iface: &str) {
         match Command::new("tc")
             .args(["qdisc", "show", "dev", iface])
