@@ -3,7 +3,7 @@ use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use crate::controller::qdiscs::get_default_iface;
+use crate::injectors::network::get_default_iface;
 /*
 Most likely going to add scheduler in here so we can fire sequentially.  Just has to deal with
 sequencing and variable intake.

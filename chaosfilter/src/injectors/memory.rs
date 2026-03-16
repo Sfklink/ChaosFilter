@@ -247,7 +247,7 @@ impl MemoryConfig {
 }
 
 // lets MemoryConfig be used as a shared injector in main.rs
-impl crate::controller::Injector for MemoryConfig {
+impl crate::injectors::Injector for MemoryConfig {
     fn name(&self) -> &'static str {
         "memory"
     }

@@ -1,6 +1,6 @@
-pub mod pid_cgroup;
-pub mod qdiscs;
-pub mod block_delay;
+pub mod memory;
+pub mod network;
+pub mod filesystem;
 pub mod ebpf;
 
 use anyhow::Result;
@@ -12,19 +12,25 @@ pub trait Injector {
     fn revert(&mut self) -> Result<()>;
     fn validate(&self, plan: &Plan) -> Result<()>;
 }
+
 pub fn build_injectors(plan: &Plan) -> Result<Vec<Box<dyn Injector>>> {
     let mut injectors: Vec<Box<dyn Injector>> = Vec::new();
 
     if plan.injectors.memory_config.enabled {
-        injectors.push(Box::new(pid_cgroup::MemoryConfig::default()));
+        injectors.push(Box::new(memory::MemoryConfig::default()));
     }
 
     if plan.injectors.network_config.enabled {
-        injectors.push(Box::new(qdiscs::NetworkConfig::default()));
+        injectors.push(Box::new(network::NetworkConfig::default()));
+    }
+
+    if plan.injectors.filesystem_config.enabled {
+        injectors.push(Box::new(filesystem::FdExhaustConfig::default()));
     }
 
     Ok(injectors)
 }
+
 pub fn validate_injectors(plan: &Plan) -> Result<()> {
     let injectors = build_injectors(plan)?;
 

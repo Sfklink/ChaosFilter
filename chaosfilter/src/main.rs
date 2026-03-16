@@ -1,6 +1,6 @@
 use anyhow::Context;
-use chaosfilter::controller::{build_injectors, validate_injectors};
-use chaosfilter::controller::filesystem::validate_fd_config;
+use chaosfilter::injectors::{build_injectors, validate_injectors};
+use chaosfilter::injectors::filesystem::validate_fd_config;
 use chaosfilter::plans::{Plan, RunConfigArgs};
 use clap::{Parser, Subcommand};
 use std::{

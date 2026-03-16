@@ -340,7 +340,7 @@ impl NetworkConfig {
     }
 }    
 // makes NetworkConfig follow the common injector interface
-impl crate::controller::Injector for NetworkConfig {
+impl crate::injectors::Injector for NetworkConfig {
     // name used when printing which injector is running
     fn name(&self) -> &'static str {
         "network"

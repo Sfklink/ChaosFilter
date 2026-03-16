@@ -2,24 +2,27 @@
 //!
 //! Reads every PID from the specified target cgroup, records each process's
 //! current `RLIMIT_NOFILE` via `prlimit64(2)`, then lowers both the soft
-//! and hard limits to the values supplied in [`FdConfig`].
+//! and hard limits to the values supplied in [`FileSystemConfig`].
 //!
-//! Calls [`FdExhaustConfig::aply`] to impose the limits and [`FdExhaustConfig::revert`]
+//! Calls [`FdExhaustConfig::apply`] to impose the limits and [`FdExhaustConfig::revert`]
 //! to restore them to the original. The caller/user is responsible for all scheduling,
 //! or in other words how long to hold chaos and when to revert.
 //!
 //! # Kernel background
 //! Every open file in the kernel is represented by an integer file descriptor
 //! (fd). The kernel enforces a per-process limit via `RLIMIT_NOFILE`.
-//! When a process calss `open(2)` / `openat(2)` and the number of open fd(s)
+//! When a process calls `open(2)` / `openat(2)` and the number of open fd(s)
 //! already equals the soft limit, the syscall returns `EMFILE`. It is worth
-//! nothing that the kernel *doesn't* automatically kill the process, but any
+//! noting that the kernel *doesn't* automatically kill the process, but any
 //! code that doesn't handle `EMFILE` will crash or malfunction.
 
 use crate::plans::Plan;
-use anyhow::{anyhow, Result, Context};
+use anyhow::{anyhow, Context, Result};
 use libc::{self, rlimit64, RLIMIT_NOFILE};
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use tracing::{info, warn};
 
 /// Snapshot of each RLIMIT_NOFILE per process
@@ -33,15 +36,16 @@ struct SavedLimitConfig {
 #[derive(Default)]
 pub struct FdExhaustConfig {
     applied: bool,
-    saved: Vec<SavedLimitConfig>
+    saved: Vec<SavedLimitConfig>,
 }
 
-/// Validates the [`FdConfig`][crate::plans::FdConfig] section of a [`Plan`].
+/// Validates the [`FileSystemConfig`][crate::plans::FileSystemConfig] section of a [`Plan`].
 ///
-/// It is recommmedn that you run this before `apply` so you may get a clear 
+/// It is recommended that you run this before `apply` so you may get a clear
 /// error message instead of a mid-run failure.
+///
 /// # Errors
-/// - `fd_config.enabled = true` but `targets.cgroup` is absent.
+/// - `filesystem_config.enabled = true` but `targets.cgroup` is absent.
 /// - The resolved cgroup directory doesn't exist.
 /// - `soft_limit > hard_limit` (kernel would reject this anyway)
 pub fn validate_fd_config(plan: &Plan) -> Result<()> {
@@ -53,7 +57,7 @@ pub fn validate_fd_config(plan: &Plan) -> Result<()> {
         .targets
         .cgroup
         .as_deref()
-        .ok_or_else(|| anyhow!("fd_config.enabled=true requires targets.cgroup"))?;
+        .ok_or_else(|| anyhow!("filesystem_config.enabled=true requires targets.cgroup"))?;
 
     let cgroup = resolve_cgroup_path(cgroup_rel);
 
@@ -68,8 +72,9 @@ pub fn validate_fd_config(plan: &Plan) -> Result<()> {
 
     if config.soft_limit > config.hard_limit {
         return Err(anyhow!(
-            "fd_config.soft_limit ({}) must be <= fd_config.hard_limit ({})",
-            config.soft_limit, config.hard_limit
+            "filesystem_config.soft_limit ({}) must be <= filesystem_config.hard_limit ({})",
+            config.soft_limit,
+            config.hard_limit
         ));
     }
 
@@ -122,7 +127,7 @@ impl FdExhaustConfig {
                             self.saved.push(SavedLimitConfig {
                                 pid,
                                 soft: old_soft_limit,
-                                hard: old_hard_limit
+                                hard: old_hard_limit,
                             });
                         }
                         Err(e) => {
@@ -130,7 +135,6 @@ impl FdExhaustConfig {
                         }
                     }
                 }
-
                 Err(e) => {
                     warn!(pid, error = %e, "prlimit64 get failed; skipping");
                 }
@@ -175,8 +179,30 @@ impl FdExhaustConfig {
     }
 }
 
-/// Called from `main::run_plan`. Validates, applies chaos, holds, reverts, the whole shaboo
-/// shabang.
+// lets FdExhaustConfig be used as a shared injector in main.rs
+impl crate::injectors::Injector for FdExhaustConfig {
+    fn name(&self) -> &'static str {
+        "filesystem"
+    }
+
+    // starts the filesystem injector
+    fn apply(&mut self, plan: &crate::plans::Plan) -> anyhow::Result<()> {
+        FdExhaustConfig::apply(self, plan)
+    }
+
+    // undoes the filesystem injector
+    fn revert(&mut self) -> anyhow::Result<()> {
+        FdExhaustConfig::revert(self)
+    }
+
+    // checks that the filesystem injector config is valid before running
+    fn validate(&self, plan: &crate::plans::Plan) -> anyhow::Result<()> {
+        validate_fd_config(plan)
+    }
+}
+
+/// Called from `main`. Validates, applies chaos, and reverts.
+/// The caller is responsible for how long chaos is held.
 pub fn run_plan(plan: &Plan) -> Result<()> {
     if !plan.injectors.filesystem_config.enabled {
         return Ok(());
@@ -201,7 +227,7 @@ fn resolve_cgroup_path(arg: &str) -> PathBuf {
     }
 }
 
-/// Returns all PIDs listen in <targets.cgroup>/**
+/// Returns all PIDs listed in <targets.cgroup>/cgroup.procs
 fn read_cgroup_pids(cg: &Path) -> Result<Vec<u32>> {
     let procs_path = cg.join("cgroup.procs");
     let contents = fs::read_to_string(&procs_path)
@@ -221,14 +247,13 @@ fn read_cgroup_pids(cg: &Path) -> Result<Vec<u32>> {
 }
 
 /// Returns `(soft, hard)` RLIMIT_NOFILE for `pid` via `prlimit64(2)`.
-/// If `pid = 0` is passed in, it will target the calling process instead
+/// If `pid = 0` is passed in, it will target the calling process instead.
 fn get_rlimit_nofile(pid: u32) -> Result<(u64, u64)> {
     let mut old = rlimit64 {
         rlim_cur: 0,
         rlim_max: 0,
     };
 
-    // prlimit64(pid, RLIMIT_NOFILE, NULL, &old) → just read, do not set.
     let rc = unsafe {
         libc::prlimit64(
             pid as libc::pid_t,
@@ -270,13 +295,12 @@ fn set_rlimit_nofile(pid: u32, soft: u64, hard: u64) -> Result<()> {
     Ok(())
 }
 
-// tests
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::plans::{
-        BlockConfig, FdConfig, Injectors, MemoryConfig as CliMemCfg,
-        NetworkConfig as CliNetCfg, Plan, Schedule, Targets
+        BlockConfig, FileSystemConfig, Injectors, MemoryConfig as CliMemCfg,
+        NetworkConfig as CliNetCfg, Plan, Schedule, Targets,
     };
     use std::fs;
     use tempfile::TempDir;
@@ -293,7 +317,7 @@ mod tests {
                 network_config: CliNetCfg::default(),
                 memory_config: CliMemCfg::default(),
                 block_config: BlockConfig::default(),
-                fd_config: FdConfig::default(),
+                filesystem_config: FileSystemConfig::default(),
             },
         }
     }
@@ -341,7 +365,7 @@ mod tests {
     fn get_rlimit_nofile_current_process() {
         let (soft, hard) = get_rlimit_nofile(0).unwrap();
 
-        assert!(soft > 0,  "soft limit should be > 0");
+        assert!(soft > 0, "soft limit should be > 0");
         assert!(hard >= soft, "hard must be >= soft");
     }
 
@@ -376,9 +400,9 @@ mod tests {
     fn validate_fd_config_error_enabled_no_cgroup() {
         let mut plan = base_plan();
 
-        plan.injectors.fd_config.enabled = true;
-        plan.injectors.fd_config.soft_limit = 64;
-        plan.injectors.fd_config.hard_limit = 64;
+        plan.injectors.filesystem_config.enabled = true;
+        plan.injectors.filesystem_config.soft_limit = 64;
+        plan.injectors.filesystem_config.hard_limit = 64;
 
         let err = validate_fd_config(&plan).unwrap_err().to_string();
         assert!(err.contains("requires targets.cgroup"));
@@ -388,9 +412,9 @@ mod tests {
     fn validate_fd_config_error_cgroup_missing() {
         let mut plan = base_plan();
 
-        plan.injectors.fd_config.enabled = true;
-        plan.injectors.fd_config.soft_limit = 64;
-        plan.injectors.fd_config.hard_limit = 64;
+        plan.injectors.filesystem_config.enabled = true;
+        plan.injectors.filesystem_config.soft_limit = 64;
+        plan.injectors.filesystem_config.hard_limit = 64;
         plan.targets.cgroup = Some("/nonexistent/cgroup/path".to_string());
 
         let err = validate_fd_config(&plan).unwrap_err().to_string();
@@ -402,9 +426,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut plan = base_plan();
 
-        plan.injectors.fd_config.enabled = true;
-        plan.injectors.fd_config.soft_limit = 200;
-        plan.injectors.fd_config.hard_limit = 100;
+        plan.injectors.filesystem_config.enabled = true;
+        plan.injectors.filesystem_config.soft_limit = 200;
+        plan.injectors.filesystem_config.hard_limit = 100;
         plan.targets.cgroup = Some(dir.path().to_str().unwrap().to_string());
 
         let err = validate_fd_config(&plan).unwrap_err().to_string();
@@ -416,9 +440,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut plan = base_plan();
 
-        plan.injectors.fd_config.enabled = true;
-        plan.injectors.fd_config.soft_limit = 64;
-        plan.injectors.fd_config.hard_limit = 64;
+        plan.injectors.filesystem_config.enabled = true;
+        plan.injectors.filesystem_config.soft_limit = 64;
+        plan.injectors.filesystem_config.hard_limit = 64;
         plan.targets.cgroup = Some(dir.path().to_str().unwrap().to_string());
 
         validate_fd_config(&plan).unwrap();
@@ -432,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn no_reverted_when_not_applied() {
+    fn no_revert_when_not_applied() {
         let mut injector = FdExhaustConfig::default();
         injector.revert().unwrap();
     }
