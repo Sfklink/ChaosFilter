@@ -4,7 +4,7 @@
 //! and can revert by restoring previous knob values (best effort).
 
 use crate::plans::Plan;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use std::{
     fs,
     io::{Read, Write},
@@ -75,7 +75,6 @@ pub fn validate_memory_config(plan: &Plan) -> Result<()> {
 
 impl MemoryConfig {
     //ugly debuggers dont even look at it
-
     fn assert_domain_cgroup(cg: &Path) -> Result<()> {
         let ty = fs::read_to_string(cg.join("cgroup.type")).unwrap_or_default();
         if ty.contains("threaded") {
@@ -87,6 +86,7 @@ impl MemoryConfig {
         }
         Ok(())
     }
+
     pub fn apply(&mut self, plan: &Plan) -> Result<()> {
         if !plan.injectors.memory_config.enabled {
             return Ok(());
@@ -245,19 +245,23 @@ impl MemoryConfig {
         Ok(())
     }
 }
+
 // lets MemoryConfig be used as a shared injector in main.rs
 impl crate::controller::Injector for MemoryConfig {
     fn name(&self) -> &'static str {
         "memory"
     }
+
     // starts the memory injector
     fn apply(&mut self, plan: &crate::plans::Plan) -> anyhow::Result<()> {
         MemoryConfig::apply(self, plan)
     }
+
     // undoes the memory injector
     fn revert(&mut self) -> anyhow::Result<()> {
         MemoryConfig::revert(self)
     }
+
     // checks that the memory injector config is valid before running
     fn validate(&self, plan: &crate::plans::Plan) -> anyhow::Result<()> {
         validate_memory_config(plan)
@@ -389,8 +393,8 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 mod tests {
     use super::*;
 
-    use tempfile::TempDir;
     use crate::plans::{Injectors, MemoryConfig as MemCfg, NetworkConfig as NetCfg, Schedule, Targets};
+    use tempfile::TempDir;
 
     fn base_plan() -> Plan {
         Plan {
@@ -404,7 +408,7 @@ mod tests {
                 network_config: NetCfg::default(),
                 memory_config: MemCfg::default(),
                 block_config: Default::default(),
-                ebpf_config: Default::default(),
+                filesystem_config: Default::default(),
             },
         }
     }

@@ -24,12 +24,14 @@ tokio = { workspace = true, features = [
     "net",
     "signal",
 ] }
-signal = "0.7.0"
+tracing = "0.1.44"
+
 [build-dependencies]
 anyhow = { workspace = true }
 aya-build = { workspace = true }
 cargo_metadata = { workspace = true }
 chaosfilter-ebpf = { path = "../chaosfilter-ebpf" }
+
 [[bin]]
 name = "chaosfilter"
 path = "src/main.rs"

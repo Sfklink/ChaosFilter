@@ -1,5 +1,6 @@
 use anyhow::Context;
 use chaosfilter::controller::{build_injectors, validate_injectors};
+use chaosfilter::controller::filesystem::validate_fd_config;
 use chaosfilter::plans::{Plan, RunConfigArgs};
 use clap::{Parser, Subcommand};
 use std::{
@@ -78,12 +79,11 @@ where
             We can implement validate just like apply, accessing the same vector,
             and for each injector, run validate() on it.
              */
-            //validate_memory_config(&plan)?;
-            //validate_iface_exists(plan.targets.iface.as_deref())?;
             //check each enabled injector in config
             validate_injectors(&plan)?;
+            validate_fd_config(&plan)?;
 
-            println!("Config OK.");
+            println!("\nConfig OK.");
             Ok(())
         }
 
@@ -112,7 +112,7 @@ where
                 injector.revert()?;
             }
 
-            println!("Chaos Plan Complete.");
+            println!("\nChaos Plan Complete.");
             Ok(())
         }
         /*

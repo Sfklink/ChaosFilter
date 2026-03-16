@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
 
-
 #So this whole file is here to automate starting a process, and just writes the test_config
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-SRC_CFG="$ROOT/chaosfilter/src/test_pid_config.toml"
-AUTO_CFG="$ROOT/chaosfilter/src/test_pid_config_auto.toml"
+SRC_CFG="$ROOT/test_config.toml"
+AUTO_CFG="$ROOT/test_pid_config_auto.toml"
 
-[[ -f "$SRC_CFG" ]] || { echo "[auto] missing: $SRC_CFG"; exit 1; }
+[[ -f "$SRC_CFG" ]] || {
+  echo "[auto] missing: $SRC_CFG"
+  exit 1
+}
 
 echo "[auto] cargo build"
 cargo build
 
 # Start a yes, now it doesnt have to be yes
 echo "[auto] starting CPU burner: yes > /dev/null"
-yes > /dev/null &
+yes >/dev/null &
 PID="$!"
 export PID
 echo "[auto] burner PID = $PID"
