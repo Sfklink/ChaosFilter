@@ -26,3 +26,7 @@ target
 running_and_doing_stuff_heehee.txt
 
 results
+
+
+# demo results so the demo can show them at the end
+demo_*.txt

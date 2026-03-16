@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ChaosFilter Full Demonstration
 #
-# YOU MUST RUN DEMO IN THE REAL TERMINAL NOT A COMPILER TERMINAL 
+# YOU MUST RUN DEMO IN THE REPOSITORY ROOT DIRECTORY 
 #
 # This demo gives the user a guided walkthrough of the current working systems in ChaosFilter
 # Each subsystem is tested independently of the others so the user can visibly see what is happening
@@ -15,6 +15,9 @@ set -euo pipefail
 #   2. A config update section for the new system
 #   3. A section a the very end that runs the new demo section
 
+
+# Makes sure the binary can always be found
+export PATH="$HOME/.cargo/bin:$PATH"
 
 # pause
 #   Helper function that is used throughout the demo to hold script execution until user hits enter
@@ -36,26 +39,11 @@ need_cmd() {
 need_cmd cargo
 need_cmd iperf3
 
-# Config file 
-#   This is the one we are pointing at and altering as needed when we run the demo 
-CONFIG_PATH="demo_config.toml"
-
-# Finds the repo's root dir # If run from a subdir walks up until it finds Cargo.toml 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$SCRIPT_DIR"
-
-while [[ "$REPO_ROOT" != "/" && ! -f "$REPO_ROOT/Cargo.toml" ]]; do
-    REPO_ROOT="$(dirname "$REPO_ROOT")"
-done
-
 # Path to the compiled Chaosfilter binary
-CHAOS_BIN="$REPO_ROOT/target/debug/chaosfilter"
+CHAOS_BIN="$(command -v chaosfilter || true)"
 
 # Initalize IPERF_PID for use later 
 IPERF_PID=""
-
-# Finds the IP of the iface
-LOCAL_IP=$(hostname -I | awk '{print $1}')
 
 echo "---------------------------------------"
 echo "ChaosFilter Interactive Demo"
@@ -64,11 +52,11 @@ echo "---------------------------------------"
 
 pause
 
-# Step 0 - Build ChaosFilter 
-#   Runs 'cargo build' to make sure everything is up to date then waits for user
-echo "Step 0 - Building ChaosFilter:"
-echo "cargo build"
-(cd "$REPO_ROOT" && cargo build)
+# Step 0 - Installing ChaosFilter 
+#   Runs 'cargo install --path' to get the path to the binary with force to rebuild if it already exists
+echo "Step 0 - Installing ChaosFilter:"
+echo "cargo install --path chaosfilter --force"
+cargo install --path chaosfilter --force
 pause
 
 # cleanup 
@@ -87,11 +75,8 @@ trap cleanup EXIT
 # Network Configuration
 #   Enables tc netem delay and packet loss and uses iperf to measure it all
 set_network_config() {
-    
-DELAY_MS=400
-LOSS_PERCENT=50.0
 
-cat <<EOF > "$CONFIG_PATH"
+cat <<EOF > "demo_config.toml"
 # This config is based on the one made by the init command and is for the demo.
 # No comments or anything just arguments
 
@@ -107,19 +92,19 @@ duration_s = 10
 [injectors.network_config]
 enabled = true
 target_iface = "default"
-delay_ms = $DELAY_MS
-loss_percent = $LOSS_PERCENT
+delay_ms = 400
+loss_percent = 50.0
 
 [injectors.memory_config]
 enabled = false
 target_pid = 0
 move_pid = true
 enable = ["cpu", "memory"]
-cpu_max = "20000 100000"
-cpu_weight = 200
-mem_max = "1G"
-mem_high = "800M"
-swap_max = "0"
+cpu_max = "max 100000"
+cpu_weight = 100
+mem_max = "max"
+mem_high = "max"
+swap_max = "max"
 
 [injectors.block_config]
 enabled = false
@@ -156,7 +141,7 @@ echo
 
 # Applied the load to the network for visible network chaos
 echo "Generating network traffic..."
-stdbuf -oL -eL iperf3 -c "$LOCAL_IP" -P 2 -i 1 -t 0 &
+stdbuf -oL -eL iperf3 -c 127.0.0.1 -P 2 -i 1 -t 0 &
 IPERF_PID=$!
 sleep 6
 kill -STOP "$IPERF_PID"
@@ -164,16 +149,19 @@ pause
 
 # Run the chaosfilter
 echo "Applying ChaosFilter..."
-echo "sudo -E $CHAOS_BIN chaos --config $CONFIG_PATH"
-sudo -E "$CHAOS_BIN" chaos --config "$CONFIG_PATH"
+echo "sudo -E $CHAOS_BIN chaos --config demo_config.toml"
 kill -CONT "$IPERF_PID"
-sleep 4
-
+sudo -E "$CHAOS_BIN" chaos --config demo_config.toml > demo_network_results.txt 2>&1 &
+CHAOS_PID=$!
+wait "$CHAOS_PID"
 
 # Stops the network load and iperf
 kill "$IPERF_PID" 2>/dev/null || true
 wait "$IPERF_PID" 2>/dev/null || true
 echo
+cat demo_network_results.txt
+echo
+pause
 
 echo "----------------------------------"
 echo "ChaosFilter Full Demo Complete"
