@@ -14,13 +14,12 @@ use tracing::{debug, info};
 const CONFIG_TEMPLATE: &str =
     include_str!("../assets/schema_config.toml");
 
-#[tokio::main]
-async fn main() {
+fn main() {
     env_logger::init();
 
-    if let Err(e) = entry(std::env::args_os()).await {
-        eprintln!("{:#}", e);
-        process::exit(1);
+    if let Err(e) = entry(std::env::args_os()) {
+        eprintln!("{e:#}");
+        std::process::exit(1);
     }
 }
 

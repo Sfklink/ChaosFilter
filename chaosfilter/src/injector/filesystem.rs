@@ -299,6 +299,7 @@ mod tests {
                 memory_config: CliMemCfg::default(),
                 block_config: BlockConfig::default(),
                 filesystem_config: FileSystemConfig::default(),
+                ebpf_config: Default::default(),
             },
         }
     }

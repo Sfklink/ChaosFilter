@@ -390,6 +390,7 @@ mod tests {
                 network_config: NetCfg::default(),
                 memory_config: MemCfg::default(),
                 block_config: Default::default(),
+                filesystem_config: Default::default(),
                 ebpf_config: Default::default(),
             },
         }

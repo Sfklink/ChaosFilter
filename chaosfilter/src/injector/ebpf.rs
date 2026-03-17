@@ -1,3 +1,4 @@
+use std::io::Write;
 use anyhow::{Context, Result};
 use aya::{
     maps::HashMap,
@@ -42,17 +43,17 @@ pub fn attach_classifier(iface: &str, cgroups: &[u64]) -> Result<EbpfHandle> {
             warn!("failed to initialize eBPF logger: {e}");
         }
         Ok(logger) => {
-            let mut logger =
-                tokio::io::unix::AsyncFd::with_interest(logger, tokio::io::Interest::READABLE)?;
-            tokio::task::spawn(async move {
-                loop {
-                    let mut guard = logger.readable_mut().await.unwrap();
-                    guard.get_inner_mut().flush();
-                    guard.clear_ready();
+            match aya_log::EbpfLogger::init(&mut ebpf) {
+                Err(e) => {
+                    warn!("failed to initialize eBPF logger: {e}");
                 }
-            });
+                Ok(_logger) => {
+                    println!("[ebpf] logger initialized");
+                }
+            }
         }
     }
+
     println!("[ebpf] logger initialized");
     {
         let map = ebpf
@@ -73,9 +74,7 @@ pub fn attach_classifier(iface: &str, cgroups: &[u64]) -> Result<EbpfHandle> {
     println!("[ebpf] adding clsact qdisc");
     let _ = tc::qdisc_add_clsact(iface);
 
-    /*
-    ah gotcha so here's where we're actually calling the thing in chaosfilter-ebpf
-     */
+
     println!("[ebpf] attach_classifier, attempting to attach ebpf program.");
 
     let program: &mut SchedClassifier = ebpf

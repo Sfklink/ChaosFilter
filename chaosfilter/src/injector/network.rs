@@ -6,9 +6,9 @@
 use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::process::{Command, Stdio};
-use ebpf::attach_classifier;
-use crate::controller::ebpf;
-use crate::controller::ebpf::EbpfHandle;
+use crate::injector::ebpf::attach_classifier;
+use crate::injector::ebpf;
+use crate::injector::ebpf::EbpfHandle;
 use tracing::{debug, error, info, warn};
 
 /// tc netem injector state.
@@ -117,7 +117,7 @@ impl NetworkConfig {
             delay_ms,
             loss_percent,
             "applying netem qdisc"
-
+            );
 
         let delay = format!("{delay_ms}ms");
         let loss = format!("{loss_percent}%");
@@ -452,7 +452,6 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
         debug!("network injector not enabled; skipping");
         return Ok(());
     }
-    let ping_target = "8.8.8.8";
 
     // need to resolve iface ONE time here, because we were getting it in multiple spots and
     // this was causing a grotesque error where we couldn't declare things publically

@@ -7,6 +7,7 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
+use anyhow::{Result, bail};
 use tracing::{debug, info, warn};
 
 fn major_minor(device_path: &str) -> Result<String> {
