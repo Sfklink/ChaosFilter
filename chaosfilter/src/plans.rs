@@ -12,7 +12,7 @@ sequencing and variable intake.
 /// Top-level chaos plan configuration.
 ///
 /// A `Plan` fully describes *what* chaos to run, *where* to run it,
-/// and *for how long*. It is consumed by the controller layer and
+/// and *for how long*. It is consumed by the injector layer and
 /// should be treated as immutable once execution begins.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plan {
@@ -69,7 +69,7 @@ pub struct Injectors {
     pub filesystem_config: FileSystemConfig
 }
 
-/// Configuration for the `controller/qdisc.rs` injector.
+/// Configuration for the `injector/qdisc.rs` injector.
 /// THIS IS MISSING QUITE A BIT, WHAT'S THE INTERFACE THAT WE'RE CONNECTING TO
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NetworkConfig {

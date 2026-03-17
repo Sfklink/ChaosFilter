@@ -1,8 +1,8 @@
 use chaosfilter::plans::{Plan, RunConfigArgs};
-use chaosfilter::controller::pid_cgroup::validate_memory_config;
-use chaosfilter::controller::qdiscs::validate_iface_exists;
-use chaosfilter::controller::{block_delay, pid_cgroup, qdiscs};
-use chaosfilter::controller::filesystem::{validate_fd_config, FilesystemInjector};
+use chaosfilter::injector::cpu_memory::validate_memory_config;
+use chaosfilter::injector::network::validate_iface_exists;
+use chaosfilter::injector::{block_delay, cpu_memory, network};
+use chaosfilter::injector::filesystem::{validate_fd_config, FilesystemInjector};
 use clap::{Parser, Subcommand};
 use std::{process,fs, path::{Path, PathBuf}};
 use anyhow::Context;
@@ -44,7 +44,7 @@ fn main() {
 ///
 /// # Side Effects
 /// - Prints status messages to standard output.
-/// - May modify system state via controller operations (e.g., `tc`, qdisc).
+/// - May modify system state via injector operations (e.g., `tc`, qdisc).
 /// - May launch an interactive stdin/stdout loop.
 ///
 /// # Errors
@@ -53,7 +53,7 @@ fn main() {
 /// - Plan construction fails (invalid config or missing inline flags).
 /// - Validation fails.
 /// - Chaos execution fails.
-/// - Any downstream controller operation fails.
+/// - Any downstream injector operation fails.
 ///
 /// # Panics
 /// This function does not explicitly panic.
@@ -115,8 +115,8 @@ where
 
 pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
     // Each module should early-return Ok(()) when its injector is disabled.
-    pid_cgroup::run_plan(plan)?;
-    qdiscs::run_plan(plan)?;
+    cpu_memory::run_plan(plan)?;
+    network::run_plan(plan)?;
     block_delay::run(plan)?;
 
     let mut filesystem_injector = FilesystemInjector::default();
