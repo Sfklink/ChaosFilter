@@ -1,17 +1,15 @@
 use anyhow::Context;
-use chaosfilter::controller::ebpf::attach_classifier;
-use chaosfilter::controller::cpu_memory::validate_memory_config;
-use chaosfilter::controller::network::{get_default_iface, validate_iface_exists};
-use chaosfilter::controller::{block_delay, network, cpu_memory};
+
 use chaosfilter::plans::{Plan, RunConfigArgs};
+use chaosfilter::injector::cpu_memory::validate_memory_config;
+use chaosfilter::injector::network::validate_iface_exists;
+use chaosfilter::injector::{block_delay, cpu_memory, network};
+use chaosfilter::injector::filesystem::{validate_fd_config, FilesystemInjector};
+
 use clap::{Parser, Subcommand};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process,
-};
-use tokio::signal;
+use std::{process,fs, path::{Path, PathBuf}};
 use toml_edit::{value, DocumentMut};
+use tracing::{debug, info};
 
 const CONFIG_TEMPLATE: &str =
     include_str!("../assets/schema_config.toml");
@@ -52,7 +50,7 @@ async fn main() {
 ///
 /// # Side Effects
 /// - Prints status messages to standard output.
-/// - May modify system state via controller operations (e.g., `tc`, qdisc).
+/// - May modify system state via injector operations (e.g., `tc`, qdisc).
 /// - May launch an interactive stdin/stdout loop.
 ///
 /// # Errors
@@ -61,52 +59,52 @@ async fn main() {
 /// - Plan construction fails (invalid config or missing inline flags).
 /// - Validation fails.
 /// - Chaos execution fails.
-/// - Any downstream controller operation fails.
+/// - Any downstream injector operation fails.
 ///
 /// # Panics
 /// This function does not explicitly panic.
 /// Panics may propagate from lower-level modules if not handled.
-pub async fn entry<I, T>(args: I) -> anyhow::Result<()>
+pub fn entry<I, T>(args: I) -> anyhow::Result<()>
 where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
     let cli = Cli::parse_from(args);
 
+    // Subscriber is initialized here based on what level of verbose you want:
+    //   (no flag)  → logging off entirely
+    //   -v         → INFO
+    //   -vv        → DEBUG
+    let level: &str = match cli.verbose {
+        0 => "off",
+        1 => "info",
+        _ => "debug",
+    };
+
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(level)),
+        )
+        .init();
+
     match cli.command {
         Commands::Validate(args) => {
             let plan = Plan::load_from_toml_file(&args.config)?;
-            /*
-            Something similar here as below.  individually called validation doesn't make sense.
-            We can implement validate just like apply, accessing the same vector,
-            and for each injector, run validate() on it.
-             */
             validate_memory_config(&plan)?;
             validate_iface_exists(plan.targets.iface.as_deref())?;
+            validate_fd_config(&plan)?;
 
-            println!("Config OK.");
+            println!("\nConfig OK.");
             Ok(())
         }
 
         Commands::Chaos(args) => {
             let plan = Plan::load_from_toml_file(&args.config)?;
+            run_plan(&plan)?;
 
-            /*
-                run_plan() can still live here for now, we should rename it to something like
-                apply_injectors(), removing revert() functionality from each run_plan() function
-             */
-                run_plan(&plan)?;
-
-                println!("Waiting for Ctrl-C...");
-                signal::ctrl_c().await?;
-
-                println!("Reverting...");
-            /*
-                and here is where revert_injectors() will go.
-            */
-
-                println!("Chaos Plan Complete.");
-                Ok(())
+            println!("\nChaos Plan Complete.");
+            Ok(())
         }
         /*
         This guy right here.
@@ -144,6 +142,12 @@ pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
     network::run_plan(plan)?;
     block_delay::run(plan)?;
 
+    let mut filesystem_injector = FilesystemInjector::default();
+    filesystem_injector.apply(plan)?;
+
+    std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
+
+    filesystem_injector.revert()?;
     Ok(())
 }
 
@@ -153,7 +157,7 @@ pub fn output_config(
                     pid: Option<u32>,
                     interface: Option<&str>,
                     ) -> anyhow::Result<PathBuf> {
-    eprintln!("init args => pid={pid:?}, iface={interface:?}, force={force}");
+    debug!(pid = ?pid, iface = ?interface, force, "init args");
     // check current directory path because relative sucks and is difficult, but I think this may
     // not be absolutely necessary, just dont run init as root.
     // If it's relative, make it relative to the current working directory.
@@ -183,7 +187,7 @@ pub fn output_config(
     if let Some(iface) = interface {
         doc["injectors"]["network_config"]["enabled"] = value(true);
         doc["injectors"]["network_config"]["target_iface"] = value(iface);
-        println!("  network injector enabled (iface={})", iface);
+        info!(iface, "network injector enabled");
         // set iface
         if doc["targets"]["iface"].is_none() {
             doc["targets"]["iface"] = value(iface);
@@ -200,7 +204,7 @@ pub fn output_config(
         doc["targets"]["cgroup"] = value(p.to_string());
         doc["injectors"]["memory_config"]["target_pid"] = value(p.to_string());
         doc["injectors"]["memory_config"]["enabled"] = value(true);
-        println!("  memory injector enabled (pid={})", p);
+        info!(pid = p, "memory injector enabled");
     }else {
         doc["injectors"]["memory_config"]["target_pid"] = value(0);
         doc["targets"]["cgroup"] = value(0);
@@ -225,6 +229,10 @@ pub fn output_config(
 #[derive(Parser, Debug)]
 #[command(name = "chaosfilter-cli", version, about = "ChaosFilter CLI & UI")]
 pub struct Cli {
+    /// Enable verbose logging output (use -v for info and -vv for debug)
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
+    pub verbose: u8,
+
     #[command(subcommand)]
     pub command: Commands,
 }

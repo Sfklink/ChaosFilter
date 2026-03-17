@@ -12,18 +12,18 @@ name = "test-plan"
 # iface needs to be moved into injectors.network_config.
 [targets]
 iface = "enp34s0"
-cgroup = "234163"
+cgroup = "6687"
 # Good, and we could add sequencing here for multiple config runs.
 [schedule]
 duration_s = 120
 
 # This is the injector for network
 [injectors.network_config]
-enabled = true
+enabled = false
 delay_ms = 100
 loss_percent = 50.0
 
-# This is the cpu_mem section.
+# This is the cpu-memory section.
 # Best tested with the following:
 #
 #sleep 600 &
@@ -32,9 +32,14 @@ loss_percent = 50.0
 #This will return your PID for testing.
 
 [injectors.memory_config]
-enabled = true
-pid = 234163
+enabled = false
+pid = 6687
 move_pid = true
 enable = ["cpu", "memory"]
 cpu_max = "20000 100000"
 mem_max = "1G"
+
+[injectors.fd_config]
+enabled = true
+soft_limit = 64
+hard_limit = 64

@@ -9,6 +9,7 @@ use std::process::{Command, Stdio};
 use ebpf::attach_classifier;
 use crate::controller::ebpf;
 use crate::controller::ebpf::EbpfHandle;
+use tracing::{debug, error, info, warn};
 
 /// tc netem injector state.
 ///
@@ -64,7 +65,6 @@ impl NetworkConfig {
     /// # Panics
     /// This function does not explicitly panic.
     ///
-
     pub fn show_qdisc_state(iface: &str) {
         match Command::new("tc")
             .args(["qdisc", "show", "dev", iface])
@@ -73,8 +73,8 @@ impl NetworkConfig {
             .status()
         {
             Ok(status) if status.success() => {}
-            Ok(status) => eprintln!("[qdisc] warning: tc qdisc show exited {}", status),
-            Err(e) => eprintln!("[qdisc] warning: failed to run tc qdisc show: {}", e),
+            Ok(status) => warn!(iface, exit_code = %status, "tc qdisc show exited non-zero"),
+            Err(e) => warn!(iface, error = %e, "failed to run tc qdisc show"),
         }
     }
 
@@ -112,30 +112,15 @@ impl NetworkConfig {
         // This is new
         let network_cgroup_target = &plan.injectors.network_config.network_ebpf_cgroup;
 
-        // TODO:  Remove me.  This guy barks just so I know that loading the vector works.
+        info!(
+            iface,
+            delay_ms,
+            loss_percent,
+            "applying netem qdisc"
 
-        if network_cgroup_target.is_empty() {
-            return Err(anyhow!(
-        "network_config.network_ebpf_cgroup must contain at least one cgroup id"
-    ));
-        }else{
-            println!("[network] cgroup target: {:?}", network_cgroup_target);
-        }
-
-
-        // This is new
-        let network_cgroup_target = &plan.injectors.network_config.network_ebpf_cgroup;
-
-        println!(
-            "[network] applying targeted netem to iface={} delay={}ms loss={}%",
-            iface, delay_ms, loss_percent
-        );
 
         let delay = format!("{delay_ms}ms");
         let loss = format!("{loss_percent}%");
-
-        // ---- ROOT PRIO ----
-        println!("[network] tc: creating root prio qdisc");
 
         println!("[network] tc: creating root prio qdisc");
 
@@ -201,7 +186,7 @@ impl NetworkConfig {
             return Err(anyhow!("tc failed applying child netem on {}", iface));
         }
 
-        // ---- FILTER ----
+
         println!("[network] tc: installing fw filter (mark=1 1:2)");
 
         let filter = Command::new("tc")
@@ -285,13 +270,13 @@ impl NetworkConfig {
 
         match status {
             Ok(s) if s.success() => {
-                println!("[network] Root qdisc applied successfully to '{}'", iface);
+                info!(iface, "root qdisc restored to fq_codel");
             }
             Ok(_) => {
-                println!("[network] ERROR: failed to apply root qdisc on '{}'", iface);
+                error!(iface, "failed to apply root qdisc");
             }
             Err(e) => {
-                println!("[network] ERROR: failed to execute tc: {}", e);
+                error!(error = %e, "failed to execute tc");
             }
         }
     }
@@ -370,7 +355,7 @@ impl NetworkConfig {
     /// May panic if internal state is inconsistent (uses `unwrap()` on `self.iface`).
     pub fn revert(&mut self) -> Result<()> {
         if !self.applied {
-            println!("[qdisc] nothing applied; skipping revert");
+            debug!("nothing applied; skipping revert");
             return Ok(());
         }
 
@@ -420,16 +405,13 @@ impl NetworkConfig {
 
         match status {
             Ok(s) if s.success() => {
-                println!("Root qdisc deleted successfully from '{}'", iface);
+                info!(iface, "root qdisc deleted");
             }
             Ok(_) => {
-                println!(
-                    "ERROR: failed to delete root qdisc from '{}' (there may not be one)",
-                    iface
-                );
+                error!(iface, "failed to delete root qdisc (there may not be one)");
             }
             Err(e) => {
-                println!("ERROR: failed to execute tc: {}", e);
+                error!(error = %e, "failed to execute tc");
             }
         }
     }
@@ -467,6 +449,7 @@ impl NetworkConfig {
 /// - Applying or reverting the qdisc fails.
 pub fn run_plan(plan: &Plan) -> Result<()> {
     if !plan.injectors.network_config.enabled {
+        debug!("network injector not enabled; skipping");
         return Ok(());
     }
     let ping_target = "8.8.8.8";
@@ -497,13 +480,12 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     let dev = iface.clone();
     println!("[network] setting ctrl-c handler for safe quit");
     ctrlc::set_handler(move || {
-        eprintln!("\nCtrl-C: removing qdisc on {dev} and exiting...");
+        warn!(iface = %dev, "Ctrl-C received; removing qdisc and exiting");
         NetworkConfig::delete_root_qdisc(&dev);
         std::process::exit(130);
     })?;
 
-    println!("[network] Freezing prgorgam at network for {} seconds", plan.schedule.duration_s);
-    std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
+    info!(duration_s = plan.schedule.duration_s, "holding chaos");
 
     // Revert
     qdisc.revert()?;

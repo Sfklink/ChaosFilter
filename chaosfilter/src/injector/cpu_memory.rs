@@ -10,6 +10,7 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
 };
+use tracing::{debug, info, warn};
 
 #[derive(Default)]
 pub struct MemoryConfig {
@@ -28,6 +29,10 @@ pub struct MemoryConfig {
     prev_swap_max: Option<String>,
 }
 
+/*
+TODO:
+    Create validate.rs, and move validation functions there.
+ */
 pub fn validate_memory_config(plan: &Plan) -> Result<()> {
     if !plan.injectors.memory_config.enabled {
         return Ok(());
@@ -98,10 +103,10 @@ impl MemoryConfig {
         let cg_rel = plan.targets.cgroup.as_deref().unwrap();
         let cg = resolve_cgroup_path(cg_rel);
 
-        println!(
-            "[cgroup] applying knobs to {} for PID {}",
-            cg.display(),
-            pid
+        info!(
+            cgroup = %cg.display(),
+            pid,
+            "applying cgroup knobs"
         );
 
         ensure_cgroup_dir_exists(&cg).context("failed to create/ensure cgroup directory")?;
@@ -122,7 +127,7 @@ impl MemoryConfig {
         self.original_pid_cg = read_pid_cgroup_v2(pid);
         self.pid = Some(pid);
         self.target_cg = Some(cg.clone());
-        println!("[DEBUG] Revert state set");
+        debug!("revert state captured");
 
         // more troubleshooting
         Self::assert_domain_cgroup(&cg)?;
@@ -132,10 +137,10 @@ impl MemoryConfig {
         if plan.injectors.memory_config.move_pid {
             match read_pid_cgroup_v2(pid) {
                 Some(cur) if cur == cg => {
-                    println!(
-                        "[cgroup] PID {} already in {}, skipping move",
+                    debug!(
                         pid,
-                        cg.display()
+                        cgroup = %cg.display(),
+                        "PID already in target cgroup, skipping move"
                     );
                 }
                 _ => {
@@ -149,59 +154,65 @@ impl MemoryConfig {
         // DAMMIT NEWLINES
         // CURSE YOU NEWLINES
         if let Some(v) = plan.injectors.memory_config.cpu_max.as_deref() {
-            eprintln!("[DEBUG] cpu.max raw='{:?}' bytes={:?}", v, v.as_bytes());
+            debug!(
+                raw = ?v,
+                bytes = ?v.as_bytes(),
+                "cpu.max raw value"
+            );
+
             write_line(cg.join("cpu.max"), v)
                 .with_context(|| format!("failed writing cpu.max='{}' at {}", v, cg.display()))?;
         }
 
         // write knobs (only if present)
-        println!("[DEBUG] [cgroup] writing cpu.max...");
+        debug!("writing cpu.weight");
         if let Some(v) = plan.injectors.memory_config.cpu_max.as_deref() {
             write_line(cg.join("cpu.max"), v)
                 .with_context(|| format!("failed writing cpu.max='{}' at {}", v, cg.display()))?;
         }
 
-        println!("[DEBUG] [cgroup] writing cpu.weight...");
+        debug!("writing cpu.weight");
         if let Some(w) = plan.injectors.memory_config.cpu_weight {
             write_line(cg.join("cpu.weight"), &w.to_string())?;
         }
 
-        println!("[DEBUG] [cgroup] writing memory.max...");
+        debug!("writing memory.max");
         if let Some(v) = plan.injectors.memory_config.mem_max.as_deref() {
             write_line(cg.join("memory.max"), v)?;
         }
-        println!("[DEBUG] [cgroup] writing memory.high...");
 
+        debug!("writing memory.high");
         if let Some(v) = plan.injectors.memory_config.mem_high.as_deref() {
             write_line(cg.join("memory.high"), v)?;
         }
-        println!("[DEBUG] [cgroup] writing memory.swap.max...");
 
+        debug!("writing memory.swap.max");
         if let Some(v) = plan.injectors.memory_config.swap_max.as_deref() {
             write_line(cg.join("memory.swap.max"), v)?;
         }
 
         self.applied = true;
 
-        // tiny verification print (like qdisc does)
-        println!("[cgroup] post-state:");
-        maybe_print(&cg.join("cpu.max"), "  cpu.max");
-        maybe_print(&cg.join("cpu.weight"), "  cpu.weight");
-        maybe_print(&cg.join("memory.max"), "  memory.max");
-        maybe_print(&cg.join("memory.high"), "  memory.high");
-        maybe_print(&cg.join("memory.swap.max"), "  memory.swap.max");
+        debug!(
+            cpu_max     = ?read_trimmed_opt(cg.join("cpu.max")),
+            cpu_weight  = ?read_trimmed_opt(cg.join("cpu.weight")),
+            mem_max     = ?read_trimmed_opt(cg.join("memory.max")),
+            mem_high    = ?read_trimmed_opt(cg.join("memory.high")),
+            swap_max    = ?read_trimmed_opt(cg.join("memory.swap.max")),
+            "post-apply cgroup state"
+        );
 
         let dur = plan.schedule.duration_s;
-        println!("[cgroup] holding for {}s...", dur);
+        info!(duration_s = dur, "holding chaos");
         std::thread::sleep(std::time::Duration::from_secs(dur));
-        println!("[cgroup] duration elapsed; reverting...");
+        info!("duration elapsed; reverting");
 
         Ok(())
     }
 
     pub fn revert(&mut self) -> Result<()> {
         if !self.applied {
-            println!("[cgroup] nothing applied; skipping revert");
+            debug!("nothing applied; skipping revert");
             return Ok(());
         }
 
@@ -213,10 +224,10 @@ impl MemoryConfig {
             .clone()
             .ok_or_else(|| anyhow!("internal error: target_cg missing"))?;
 
-        println!(
-            "[cgroup] reverting knobs on {} for PID {}",
-            cg.display(),
-            pid
+        info!(
+            cgroup = %cg.display(),
+            pid,
+            "reverting cgroup knobs"
         );
 
         // restore original (best effort-ish: if file exists, try write)
@@ -231,11 +242,11 @@ impl MemoryConfig {
             // writing PID to cgroup.procs moves it
             if orig.exists() {
                 if let Err(e) = move_pid_into_cgroup(orig, pid) {
-                    eprintln!(
-                        "[cgroup] warning: failed moving PID {} back to {}: {}",
+                    warn!(
                         pid,
-                        orig.display(),
-                        e
+                        original_cgroup = %orig.display(),
+                        error = %e,
+                        "failed moving PID back to original cgroup"
                     );
                 }
             }
@@ -343,17 +354,11 @@ fn read_pid_cgroup_v2(pid: u32) -> Option<PathBuf> {
     None
 }
 
-fn maybe_print(path: &Path, name: &str) {
-    match fs::read_to_string(path) {
-        Ok(v) => println!("{name}: {}", v.trim()),
-        Err(e) => println!("{name}: <unreadable: {e}>"),
-    }
-}
-
 // apply and revert
 // called from main
 pub fn run_plan(plan: &Plan) -> Result<()> {
     if !plan.injectors.memory_config.enabled {
+        debug!("memory injector not enabled; skipping");
         return Ok(());
     }
     validate_memory_config(plan)?;
@@ -370,7 +375,6 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use tempfile::TempDir;
     use crate::plans::{Injectors, MemoryConfig as MemCfg, NetworkConfig as NetCfg, Schedule, Targets};
 
@@ -473,7 +477,11 @@ mod tests {
 
     #[test]
     fn enable_controllers_on_parent_errors_when_no_parent() {
-        let err = enable_controllers_on_parent(Path::new("/"), &["cpu".to_string()]).unwrap_err();
+        let err = enable_controllers_on_parent(
+            Path::new("/"),
+            &["cpu".to_string()]
+        )
+        .unwrap_err();
 
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
@@ -537,9 +545,7 @@ mod tests {
         fs::create_dir_all(&cgroup).unwrap();
         fs::write(cgroup.join("cgroup.type"), "threaded\n").unwrap();
 
-        let err = MemoryConfig::assert_domain_cgroup(&cgroup)
-            .unwrap_err()
-            .to_string();
+        let err = MemoryConfig::assert_domain_cgroup(&cgroup).unwrap_err().to_string();
         assert!(err.contains("threaded"));
         assert!(err.contains("cannot move PID"));
     }
@@ -591,12 +597,5 @@ mod tests {
 
         let err = validate_memory_config(&plan).unwrap_err().to_string();
         assert!(err.contains("parent cgroup directory does not exist"));
-    }
-
-    #[test]
-    fn maybe_print_does_not_panic_on_missing_file() {
-        // It prints <unreadable: ...>; just ensure it doesn't panic.
-        let tempdir = TempDir::new().unwrap();
-        maybe_print(&tempdir.path().join("does_not_exist"), "does_not_exist");
     }
 }

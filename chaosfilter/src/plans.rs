@@ -11,7 +11,7 @@ sequencing and variable intake.
 /// Top-level chaos plan configuration.
 ///
 /// A `Plan` fully describes *what* chaos to run, *where* to run it,
-/// and *for how long*. It is consumed by the controller layer and
+/// and *for how long*. It is consumed by the injector layer and
 /// should be treated as immutable once execution begins.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plan {
@@ -28,7 +28,6 @@ pub struct Plan {
     #[serde(default)]
     pub injectors: Injectors,
 }
-
 
 impl Plan {
     /// Loads a [`Plan`] from a TOML configuration file.
@@ -70,18 +69,6 @@ impl Plan {
                 .find(|w| w[0] == "dev")
                 .map(|w| w[1].to_string())
         }
-        //
-        // let mut iface = plan
-        //     .targets
-        //     .iface
-        //     .as_deref()
-        //     .ok_or_else(|| anyhow::anyhow!("targets.iface required for eBPF attach"))?
-        //     .to_string();
-        //
-        // if iface == "default" {
-        //     iface = get_default_iface()
-        //         .ok_or_else(|| anyhow::anyhow!("could not determine default interface via `ip route get`"))?;
-        // }
         Ok(plan)
     }
 }
@@ -98,11 +85,13 @@ pub struct Injectors {
     #[serde(default)]
     pub block_config: BlockConfig,
     #[serde(default)]
+    pub filesystem_config: FileSystemConfig,
+    #[serde(default)]
     pub ebpf_config: EbpfConfig,
 }
 
-
-/// Configuration for the `controller/qdisc.rs` injector.
+/// Configuration for the `injector/qdisc.rs` injector.
+/// THIS IS MISSING QUITE A BIT, WHAT'S THE INTERFACE THAT WE'RE CONNECTING TO
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NetworkConfig {
     /// Master enable flag for this injector.
@@ -169,7 +158,23 @@ pub struct BlockConfig {
     pub wiops: Option<u64>,
 }
 
+/// Configuration for File Descriptor Exhaustion
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FileSystemConfig {
+    /// master enable flag
+    #[serde(default)]
+    pub enabled: bool,
 
+    /// New soft limit for RLIMIT_NOFILE applied to each PID in the cgroup. (e.g., 32, 64)
+    /// Must be < hard_limit or it will cause issues.
+    #[serde(default)]
+    pub soft_limit: u64,
+
+    /// New hard limit for RLIMIT_NOFILE applied to each PID in the cgroup. (e.g., 128, 256)
+    /// Must be > soft_limit or it will cause issues.
+    #[serde(default)]
+    pub hard_limit: u64,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EbpfConfig {
