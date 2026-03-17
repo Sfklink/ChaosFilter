@@ -137,7 +137,6 @@ impl NetworkConfig {
         // ---- ROOT PRIO ----
         println!("[network] tc: creating root prio qdisc");
 
-        let root = Command::new("tc")
         println!("[network] tc: creating root prio qdisc");
 
         let root = Command::new("tc")
@@ -174,7 +173,6 @@ impl NetworkConfig {
             delay, loss
         );
 
-        let netem = Command::new("tc")
         // ---- NETEM CHILD ----
         println!(
             "[network] tc: attaching netem; parent=1:2 delay={} loss={}",
