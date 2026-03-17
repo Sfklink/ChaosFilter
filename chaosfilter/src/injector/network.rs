@@ -6,9 +6,7 @@
 use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::process::{Command, Stdio};
-use crate::injector::ebpf::attach_classifier;
-use crate::injector::ebpf;
-use crate::injector::ebpf::EbpfHandle;
+use crate::injector::ebpf::{attach_classifier, EbpfHandle};
 use tracing::{debug, error, info, warn};
 
 /// tc netem injector state.
@@ -227,7 +225,7 @@ impl NetworkConfig {
 
         // this is also new down here
         println!("[network] calling attach_classifier, attempting to attach ebpf program.");
-        let handle = attach_classifier(iface, network_cgroup_target)
+        let _handle = attach_classifier(iface, network_cgroup_target)
             .context("failed to attach eBPF classifier")?;
 
         //TODO: Remove debugger.

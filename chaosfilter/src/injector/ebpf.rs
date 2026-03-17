@@ -1,4 +1,3 @@
-use std::io::Write;
 use anyhow::{Context, Result};
 use aya::{
     maps::HashMap,
@@ -42,7 +41,7 @@ pub fn attach_classifier(iface: &str, cgroups: &[u64]) -> Result<EbpfHandle> {
         Err(e) => {
             warn!("failed to initialize eBPF logger: {e}");
         }
-        Ok(logger) => {
+        Ok(_logger) => {
             match aya_log::EbpfLogger::init(&mut ebpf) {
                 Err(e) => {
                     warn!("failed to initialize eBPF logger: {e}");

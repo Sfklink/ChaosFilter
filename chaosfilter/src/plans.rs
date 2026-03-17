@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -47,8 +47,10 @@ impl Plan {
         let path = path.as_ref();
         let s = fs::read_to_string(path)
             .with_context(|| format!("failed to read config file: {}", path.display()))?;
-        let plan: Plan = toml::from_str(&s)
+
+        let mut plan: Plan = toml::from_str(&s)
             .with_context(|| format!("failed to parse TOML in: {}", path.display()))?;
+
         fn get_default_iface() -> Option<String> {
             let output = std::process::Command::new("ip")
                 .args(["route", "get", "8.8.8.8"])
@@ -61,7 +63,6 @@ impl Plan {
 
             let stdout = String::from_utf8_lossy(&output.stdout);
 
-            // Look for: "dev <iface>"
             stdout
                 .split_whitespace()
                 .collect::<Vec<_>>()
@@ -69,10 +70,20 @@ impl Plan {
                 .find(|w| w[0] == "dev")
                 .map(|w| w[1].to_string())
         }
+
+        if let Some(iface) = plan.targets.iface.as_deref() {
+            if iface == "default" {
+                plan.targets.iface = Some(
+                    get_default_iface()
+                        .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?
+                );
+            }
+        }
+
         Ok(plan)
     }
-}
 
+}
 /// Injector configuration block.
 ///
 /// Each field represents configuration for a specific chaos mechanism.
