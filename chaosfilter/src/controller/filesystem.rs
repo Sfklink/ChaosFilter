@@ -20,7 +20,7 @@ use crate::plans::Plan;
 use anyhow::{anyhow, Result, Context};
 use libc::{self, rlimit64, RLIMIT_NOFILE};
 use std::{fs, path::{Path, PathBuf}};
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 
 /// Snapshot of each RLIMIT_NOFILE per process
 struct SavedLimitConfig {
@@ -83,6 +83,7 @@ impl FilesystemInjector {
     /// - Returns an error if the cgroup cannot be read or if `prlimit64` fails
     pub fn apply(&mut self, plan: &Plan) -> Result<()> {
         if !plan.injectors.filesystem_config.enabled {
+            debug!("filesystem injector not enabled; skipping");
             return Ok(());
         }
 

@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use std::{process,fs, path::{Path, PathBuf}};
 use anyhow::Context;
 use toml_edit::{value, DocumentMut};
+use tracing::{debug, info};
 
 const CONFIG_TEMPLATE: &str =
     include_str!("../assets/schema_config.toml");
@@ -64,6 +65,23 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let cli = Cli::parse_from(args);
+
+    // Subscriber is initialized here based on what level of verbose you want:
+    //   (no flag)  → logging off entirely
+    //   -v         → INFO
+    //   -vv        → DEBUG
+    let level: &str = match cli.verbose {
+        0 => "off",
+        1 => "info",
+        _ => "debug",
+    };
+
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(level)),
+        )
+        .init();
 
     match cli.command {
         Commands::Validate(args) => {
@@ -134,7 +152,7 @@ pub fn output_config(
                     pid: Option<u32>,
                     interface: Option<&str>,
                     ) -> anyhow::Result<PathBuf> {
-    eprintln!("init args => pid={pid:?}, iface={interface:?}, force={force}");
+    debug!(pid = ?pid, iface = ?interface, force, "init args");
     // check current directory path because relative sucks and is difficult, but I think this may
     // not be absolutely necessary, just dont run init as root.
     // If it's relative, make it relative to the current working directory.
@@ -164,7 +182,7 @@ pub fn output_config(
     if let Some(iface) = interface {
         doc["injectors"]["network_config"]["enabled"] = value(true);
         doc["injectors"]["network_config"]["target_iface"] = value(iface);
-        println!("  network injector enabled (iface={})", iface);
+        info!(iface, "network injector enabled");
         // set iface
         if doc["targets"]["iface"].is_none() {
             doc["targets"]["iface"] = value(iface);
@@ -181,7 +199,7 @@ pub fn output_config(
         doc["targets"]["cgroup"] = value(p.to_string());
         doc["injectors"]["memory_config"]["target_pid"] = value(p.to_string());
         doc["injectors"]["memory_config"]["enabled"] = value(true);
-        println!("  memory injector enabled (pid={})", p);
+        info!(pid = p, "memory injector enabled");
     }else {
         doc["injectors"]["memory_config"]["target_pid"] = value(0);
         doc["targets"]["cgroup"] = value(0);
@@ -208,6 +226,10 @@ pub fn output_config(
 #[derive(Parser, Debug)]
 #[command(name = "chaosfilter-cli", version, about = "ChaosFilter CLI & UI")]
 pub struct Cli {
+    /// Enable verbose logging output (use -v for info and -vv for debug)
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
+    pub verbose: u8,
+
     #[command(subcommand)]
     pub command: Commands,
 }
