@@ -2,7 +2,7 @@
 //!
 //! Applies a root `netem` qdisc to the configured network interface and restores
 //! a known-good baseline on revert.
-use crate::controller::Injector;
+
 use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::process::{Command, Stdio};
@@ -339,50 +339,8 @@ impl NetworkConfig {
             }
         }
     }
-    // makes NetworkConfig follow the common injector interface
-impl crate::controller::Injector for NetworkConfig {
-    // name used when printing which injector is running
-    fn name(&self) -> &'static str {
-        "network"
-    }
-
-    // starts the network injector
-    fn apply(&mut self, plan: &crate::plans::Plan) -> anyhow::Result<()> {
-        let mut iface = plan
-            .targets
-            .iface
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("targets.iface required for network injector"))?
-            .to_string();
-
-        if iface == "default" {
-            iface = get_default_iface()
-                .ok_or_else(|| anyhow::anyhow!("could not determine default interface via `ip route get`"))?;
-        }
-
-        NetworkConfig::apply(self, plan, &iface)
-    }
-
-    // removes the network injector
-    fn revert(&mut self) -> anyhow::Result<()> {
-        NetworkConfig::revert(self)
-    }
-
-    // checks that the network config is valid before running
-    fn validate(&self, plan: &crate::plans::Plan) -> anyhow::Result<()> {
-        let iface = if let Some(iface) = plan.targets.iface.as_deref() {
-            if iface == "default" {
-                get_default_iface()
-            } else {
-                Some(iface.to_string())
-            }
-        } else {
-            None
-        };
-
-        validate_iface_exists(iface.as_deref())
-    }
 }
+
 /// Runs the plan end-to-end (baseline → apply → hold → revert).
 ///
 /// This is the one-shot entrypoint used by the CLI to execute network chaos

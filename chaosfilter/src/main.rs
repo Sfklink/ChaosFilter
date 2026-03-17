@@ -2,9 +2,7 @@ use anyhow::Context;
 use chaosfilter::controller::ebpf::attach_classifier;
 use chaosfilter::controller::pid_cgroup::validate_memory_config;
 use chaosfilter::controller::qdiscs::{get_default_iface, validate_iface_exists};
-// brings in the injector system so main can build a list of injectors,
-// start them, and clean them up later
-use chaosfilter::controller::{build_injectors, validate_injectors};
+use chaosfilter::controller::{block_delay, pid_cgroup, qdiscs};
 use chaosfilter::plans::{Plan, RunConfigArgs};
 use clap::{Parser, Subcommand};
 use std::{
@@ -83,10 +81,8 @@ where
             We can implement validate just like apply, accessing the same vector,
             and for each injector, run validate() on it.
              */
-            //validate_memory_config(&plan)?;
-            //validate_iface_exists(plan.targets.iface.as_deref())?;
-            //check each enabled injector in config
-            validate_injectors(&plan)?
+            validate_memory_config(&plan)?;
+            validate_iface_exists(plan.targets.iface.as_deref())?;
 
             println!("Config OK.");
             Ok(())
@@ -99,22 +95,15 @@ where
                 run_plan() can still live here for now, we should rename it to something like
                 apply_injectors(), removing revert() functionality from each run_plan() function
              */
-                //Builds list of enabled injectors
-                let mut active_injectors = build_injectors(&plan)?;
-                
-                //Start injectors
-                for injector in active_injectors.iter_mut() {
-                    println!("starting {}", injector.name());
-                    injector.apply(&plan)?;
+                run_plan(&plan)?;
 
                 println!("Waiting for Ctrl-C...");
                 signal::ctrl_c().await?;
 
-                //undo the injectors in reverse order
                 println!("Reverting...");
-                for injector in active_injectors.iter_mut().rev() {
-                    injector.revert()?;
-                }
+            /*
+                and here is where revert_injectors() will go.
+            */
 
                 println!("Chaos Plan Complete.");
                 Ok(())
