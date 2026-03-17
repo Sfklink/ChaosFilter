@@ -3,7 +3,6 @@ use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use crate::controller::qdiscs::get_default_iface;
 /*
 Most likely going to add scheduler in here so we can fire sequentially.  Just has to deal with
 sequencing and variable intake.
@@ -51,18 +50,38 @@ impl Plan {
             .with_context(|| format!("failed to read config file: {}", path.display()))?;
         let plan: Plan = toml::from_str(&s)
             .with_context(|| format!("failed to parse TOML in: {}", path.display()))?;
+        fn get_default_iface() -> Option<String> {
+            let output = std::process::Command::new("ip")
+                .args(["route", "get", "8.8.8.8"])
+                .output()
+                .ok()?;
 
-        let mut iface = plan
-            .targets
-            .iface
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("targets.iface required for eBPF attach"))?
-            .to_string();
+            if !output.status.success() {
+                return None;
+            }
 
-        if iface == "default" {
-            iface = get_default_iface()
-                .ok_or_else(|| anyhow::anyhow!("could not determine default interface via `ip route get`"))?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+
+            // Look for: "dev <iface>"
+            stdout
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .windows(2)
+                .find(|w| w[0] == "dev")
+                .map(|w| w[1].to_string())
         }
+        //
+        // let mut iface = plan
+        //     .targets
+        //     .iface
+        //     .as_deref()
+        //     .ok_or_else(|| anyhow::anyhow!("targets.iface required for eBPF attach"))?
+        //     .to_string();
+        //
+        // if iface == "default" {
+        //     iface = get_default_iface()
+        //         .ok_or_else(|| anyhow::anyhow!("could not determine default interface via `ip route get`"))?;
+        // }
         Ok(plan)
     }
 }
@@ -100,6 +119,8 @@ pub struct NetworkConfig {
     /// Packet loss percentage (`0.0`–`100.0`).
     #[serde(default)]
     pub loss_percent: f32,
+
+    pub network_ebpf_cgroup: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

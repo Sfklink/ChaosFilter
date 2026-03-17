@@ -24,6 +24,8 @@ pub fn chaosfilter(ctx: TcContext) -> i32 {
 
 fn try_chaosfilter(mut ctx: TcContext) -> Result<i32, i32> {
     let cgroup_id = unsafe { bpf_get_current_cgroup_id() };
+    info!(&ctx, "egress hit, current cgroup {}", cgroup_id);
+
     let matched = unsafe { TARGET_CGROUPS.get(&cgroup_id).is_some() };
 
     if matched {

@@ -30,3 +30,5 @@ results
 /pid_cgroup_scratch.txt
 cf-config.toml
 Cargo.lock
+cf-config.toml
+Cargo.lock

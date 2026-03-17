@@ -1,8 +1,8 @@
 use anyhow::Context;
 use chaosfilter::controller::ebpf::attach_classifier;
-use chaosfilter::controller::pid_cgroup::validate_memory_config;
-use chaosfilter::controller::qdiscs::{get_default_iface, validate_iface_exists};
-use chaosfilter::controller::{block_delay, pid_cgroup, qdiscs};
+use chaosfilter::controller::cpu_memory::validate_memory_config;
+use chaosfilter::controller::network::{get_default_iface, validate_iface_exists};
+use chaosfilter::controller::{block_delay, network, cpu_memory};
 use chaosfilter::plans::{Plan, RunConfigArgs};
 use clap::{Parser, Subcommand};
 use std::{
@@ -140,8 +140,8 @@ where
 
 pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
     // Each module should early-return Ok(()) when its injector is disabled.
-    pid_cgroup::run_plan(plan)?;
-    qdiscs::run_plan(plan)?;
+    cpu_memory::run_plan(plan)?;
+    network::run_plan(plan)?;
     block_delay::run(plan)?;
 
     Ok(())
