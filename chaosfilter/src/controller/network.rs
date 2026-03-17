@@ -112,6 +112,20 @@ impl NetworkConfig {
         // This is new
         let network_cgroup_target = &plan.injectors.network_config.network_ebpf_cgroup;
 
+        // TODO:  Remove me.  This guy barks just so I know that loading the vector works.
+
+        if network_cgroup_target.is_empty() {
+            return Err(anyhow!(
+        "network_config.network_ebpf_cgroup must contain at least one cgroup id"
+    ));
+        }else{
+            println!("[network] cgroup target: {:?}", network_cgroup_target);
+        }
+
+
+        // This is new
+        let network_cgroup_target = &plan.injectors.network_config.network_ebpf_cgroup;
+
         println!(
             "[network] applying targeted netem to iface={} delay={}ms loss={}%",
             iface, delay_ms, loss_percent
@@ -120,6 +134,10 @@ impl NetworkConfig {
         let delay = format!("{delay_ms}ms");
         let loss = format!("{loss_percent}%");
 
+        // ---- ROOT PRIO ----
+        println!("[network] tc: creating root prio qdisc");
+
+        let root = Command::new("tc")
         println!("[network] tc: creating root prio qdisc");
 
         let root = Command::new("tc")
@@ -151,6 +169,13 @@ impl NetworkConfig {
             }
         }
 
+        println!(
+            "[network] tc: attaching netem; parent=1:2 delay={} loss={}",
+            delay, loss
+        );
+
+        let netem = Command::new("tc")
+        // ---- NETEM CHILD ----
         println!(
             "[network] tc: attaching netem; parent=1:2 delay={} loss={}",
             delay, loss
@@ -213,6 +238,14 @@ impl NetworkConfig {
             .context("failed to attach eBPF classifier")?;
 
         self.ebpf_handle = Some(handle);
+
+        //TODO: Remove debugger.
+
+
+        // this is also new down here
+        println!("[network] calling attach_classifier, attempting to attach ebpf program.");
+        let handle = attach_classifier(iface, network_cgroup_target)
+            .context("failed to attach eBPF classifier")?;
 
         //TODO: Remove debugger.
 
@@ -438,6 +471,7 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     if !plan.injectors.network_config.enabled {
         return Ok(());
     }
+    let ping_target = "8.8.8.8";
 
     // need to resolve iface ONE time here, because we were getting it in multiple spots and
     // this was causing a grotesque error where we couldn't declare things publically
