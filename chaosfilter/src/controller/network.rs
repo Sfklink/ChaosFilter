@@ -6,6 +6,8 @@
 use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::process::{Command, Stdio};
+use ebpf::attach_classifier;
+use crate::controller::ebpf;
 
 /// tc netem injector state.
 ///
@@ -101,65 +103,135 @@ impl NetworkConfig {
     /// # Panics
     /// May panic if `plan.targets.iface` is `None` (uses `unwrap()`).
     /// Callers should ensure the plan is valid (e.g., via [`validate_plan`]).
-    pub fn apply(&mut self, plan: &Plan, iface: &str) -> Result<()> {
+     pub fn apply(&mut self, plan: &Plan, iface: &str) -> Result<()> {
         let delay_ms = plan.injectors.network_config.delay_ms;
         let loss_percent = plan.injectors.network_config.loss_percent;
 
+        // This is new
+        let network_cgroup_target = &plan.injectors.network_config.network_ebpf_cgroup;
+
+        // TODO:  Remove me.  This guy barks just so I know that loading the vector works.
+
+        if network_cgroup_target.is_empty() {
+            return Err(anyhow!(
+        "network_config.network_ebpf_cgroup must contain at least one cgroup id"
+    ));
+        }else{
+            println!("[network] cgroup target: {:?}", network_cgroup_target);
+        }
+
+
         println!(
-            "[qdisc] applying targeted netem to {} (delay={}ms loss={}%)",
+            "[network] applying targeted netem → iface={} delay={}ms loss={}%",
             iface, delay_ms, loss_percent
         );
 
         let delay = format!("{delay_ms}ms");
         let loss = format!("{loss_percent}%");
 
-        let root_status = Command::new("tc")
+        // ---- ROOT PRIO ----
+        println!("[network] tc: creating root prio qdisc");
+
+        let root = Command::new("tc")
             .args([
-                "qdisc", "replace", "dev", iface, "root", "handle", "1:", "prio", "bands",
-                "2",
+                "qdisc", "replace", "dev", iface,
+                "root", "handle", "1:",
+                "prio", "bands", "2",
                 "priomap",
-                "0", "0", "0", "0",
-                "0", "0", "0", "0",
-                "0", "0", "0", "0",
-                "0", "0", "0", "0",])
-            .status()
+                "0","0","0","0",
+                "0","0","0","0",
+                "0","0","0","0",
+                "0","0","0","0",
+            ])
+            .output()
             .context("failed to execute tc (root prio)")?;
 
-        if !root_status.success() && !root_prio_exists(iface)? {
-            return Err(anyhow!("tc failed creating prio root qdisc on {}", iface));
+        println!("[network] root prio status: {}", root.status);
+
+        if !root.status.success() {
+            eprintln!(
+                "[network][ERR] root prio stderr:\n{}",
+                String::from_utf8_lossy(&root.stderr)
+            );
+
+            if !root_prio_exists(iface)? {
+                return Err(anyhow!("tc failed creating prio root qdisc on {}", iface));
+            } else {
+                println!("[network] root prio already exists, continuing");
+            }
         }
 
-        let status = Command::new("tc")
+        // ---- NETEM CHILD ----
+        println!(
+            "[network] tc: attaching netem; parent=1:2 delay={} loss={}",
+            delay, loss
+        );
+
+        let netem = Command::new("tc")
             .args([
-                "qdisc", "replace", "dev", iface, "parent", "1:2", "handle", "20:", "netem",
-                "delay", &delay, "loss", &loss,
+                "qdisc", "replace", "dev", iface,
+                "parent", "1:2",
+                "handle", "20:",
+                "netem",
+                "delay", &delay,
+                "loss", &loss,
             ])
-            .status()
+            .output()
             .context("failed to execute tc (netem child)")?;
 
-        if !status.success() {
+        println!("[network] netem status: {}", netem.status);
+
+        if !netem.status.success() {
+            eprintln!(
+                "[network][ERR] netem stderr:\n{}",
+                String::from_utf8_lossy(&netem.stderr)
+            );
             return Err(anyhow!("tc failed applying child netem on {}", iface));
         }
 
-        let status = Command::new("tc")
+        // ---- FILTER ----
+        println!("[network] tc: installing fw filter (mark=1 1:2)");
+
+        let filter = Command::new("tc")
             .args([
-                "filter", "replace", "dev", iface, "parent", "1:", "protocol", "all", "prio",
-                "1", "handle", "1", "fw", "flowid", "1:2",
+                "filter", "replace", "dev", iface,
+                "parent", "1:",
+                "protocol", "all",
+                "prio", "1",
+                "handle", "1",
+                "fw",
+                "flowid", "1:2",
             ])
-            .status()
+            .output()
             .context("failed to execute tc (fw filter)")?;
 
-        if !status.success() {
+        println!("[network] filter status: {}", filter.status);
+
+        if !filter.status.success() {
+            eprintln!(
+                "[network][ERR] filter stderr:\n{}",
+                String::from_utf8_lossy(&filter.stderr)
+            );
             return Err(anyhow!("tc failed installing fw filter on {}", iface));
         }
 
         Self::show_qdisc_state(iface);
 
+
+        // this is also new down here
+        println!("[network] calling attach_classifier, attempting to attach ebpf program.");
+        let handle = attach_classifier(iface, network_cgroup_target)
+            .context("failed to attach eBPF classifier")?;
+
+        //TODO: Remove debugger.
+
         self.applied = true;
         self.iface = Some(iface.to_string());
+
+        println!("[network] apply() complete");
+
         Ok(())
     }
-
     /// Restores a deterministic baseline root qdisc on `iface`.
     ///
     /// This replaces the current root qdisc with `fq_codel`. It does **not**
@@ -191,13 +263,13 @@ impl NetworkConfig {
 
         match status {
             Ok(s) if s.success() => {
-                println!("Root qdisc applied successfully to '{}'", iface);
+                println!("[network] Root qdisc applied successfully to '{}'", iface);
             }
             Ok(_) => {
-                println!("ERROR: failed to apply root qdisc on '{}'", iface);
+                println!("[network] ERROR: failed to apply root qdisc on '{}'", iface);
             }
             Err(e) => {
-                println!("ERROR: failed to execute tc: {}", e);
+                println!("[network] ERROR: failed to execute tc: {}", e);
             }
         }
     }
@@ -375,7 +447,6 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     if !plan.injectors.network_config.enabled {
         return Ok(());
     }
-    let ping_target = "8.8.8.8";
 
     // need to resolve iface ONE time here, because we were getting it in multiple spots and
     // this was causing a grotesque error where we couldn't declare things publically
@@ -394,13 +465,14 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     }
 
     let iface_str: &str = &iface;
-
+    println!("[network] run_plan({})", iface_str);
     // apply the mutators
     let mut qdisc = NetworkConfig::default();
     qdisc.apply(plan, iface_str)?;
 
     // Maintain our ctrl-c functionality
     let dev = iface.clone();
+    println!("[network] setting ctrl-c handler for safe quit");
     ctrlc::set_handler(move || {
         eprintln!("\nCtrl-C: removing qdisc on {dev} and exiting...");
         NetworkConfig::delete_root_qdisc(&dev);
@@ -409,15 +481,9 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 
     println!("Holding chaos for {} seconds.", plan.schedule.duration_s);
 
-    // Ping using resolved iface (NOT plan.targets.iface)
-    let chaos_stats = run_ping_test_with_iface(iface_str, plan.schedule.duration_s, ping_target)
-        .context("Failed to collect chaos ping stats")?;
 
     // Revert
     qdisc.revert()?;
-
-    // Report using resolved iface
-    print_comparison(iface_str, plan.schedule.duration_s, &chaos_stats);
 
     Ok(())
 }
@@ -462,121 +528,6 @@ pub fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Executes a ping test and parses packet statistics.
-///
-/// This function runs a timed ping using the interface defined
-/// in the provided [`Plan`] and extracts transmission, loss,
-/// and RTT metrics.
-///
-/// # Arguments
-/// * `plan` - Chaos plan containing target interface and duration.
-/// * `target` - Destination host or IP address to ping.
-///
-/// # Returns
-/// Returns `Some(PingStats)` if:
-/// - The ping command executes successfully, and
-/// - Output can be parsed correctly.
-///
-/// Returns `None` if:
-/// - The interface is not set in the plan,
-/// - The command fails,
-/// - Or parsing fails.
-///
-/// # Side Effects
-/// Executes:
-/// - `ping -I <iface> -w <duration> <target>`
-///
-/// # Notes
-/// RTT values are reported in milliseconds.
-/// Packet loss is a percentage in the range `0.0..=100.0`.
-pub fn run_ping_test_with_iface(iface: &str, duration_s: u64, target: &str) -> Option<PingStats> {
-    let output = Command::new("ping")
-        .args(["-I", iface, "-w", &duration_s.to_string(), target])
-        .output()
-        .ok()?;
-
-    // If ping failed (e.g. invalid iface), don't return misleading zeros.
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let mut transmitted = 0;
-    let mut received = 0;
-    let mut loss_pct = 0.0;
-    let mut rtt_min = 0.0;
-    let mut rtt_avg = 0.0;
-    let mut rtt_max = 0.0;
-
-    for line in stdout.lines() {
-        if line.contains("packets transmitted") {
-            let parts: Vec<&str> = line.split(',').collect();
-            transmitted = parts.get(0)?.trim().split(' ').next()?.parse().ok()?;
-            received = parts.get(1)?.trim().split(' ').next()?.parse().ok()?;
-            loss_pct = parts.get(2)?.trim().split('%').next()?.parse().ok()?;
-        }
-
-        if line.contains("rtt min/avg/max") {
-            let stats = line.split('=').nth(1)?.trim();
-            let nums: Vec<&str> = stats.split('/').collect();
-            rtt_min = nums.get(0)?.parse().ok()?;
-            rtt_avg = nums.get(1)?.parse().ok()?;
-            rtt_max = nums.get(2)?.parse().ok()?;
-        }
-    }
-
-    Some(PingStats {
-        transmitted,
-        received,
-        loss_pct,
-        rtt_min,
-        rtt_avg,
-        rtt_max,
-    })
-}
-
-pub fn print_comparison(
-    iface: &str,
-    duration: u64,
-    //control: &PingStats,
-    modified: &PingStats,
-) -> String {
-    let output = format!(
-        "\n===== Network Comparison (Duration: {duration} seconds) =====
-
-DURING CHAOS ({iface}):
-  transmitted : {md_tx}
-  received    : {md_rx}
-  loss %      : {md_loss}
-  rtt (ms)    : min {md_min} | avg {md_avg} | max {md_max}
-",
-        // Just hiding this little guy down here because this was implemented nasty as hell and I hate it
-        // this is what happens when you make no-value-added updates to the code and then merge them into main
-        // BEFORE CHAOS (baseline of {iface}):
-        //   transmitted : {ct_tx}
-        //   received    : {ct_rx}
-        //   loss %      : {ct_loss}
-        //   rtt (ms)    : min {ct_min} | avg {ct_avg} | max {ct_max}
-
-        //         ct_tx = control.transmitted,
-        //         ct_rx = control.received,
-        //         ct_loss = control.loss_pct,
-        //         ct_min = control.rtt_min,
-        //         ct_avg = control.rtt_avg,
-        //         ct_max = control.rtt_max,
-        md_tx = modified.transmitted,
-        md_rx = modified.received,
-        md_loss = modified.loss_pct,
-        md_min = modified.rtt_min,
-        md_avg = modified.rtt_avg,
-        md_max = modified.rtt_max,
-    );
-
-    println!("{}", output);
-    output
 }
 
 fn root_prio_exists(iface: &str) -> Result<bool> {
@@ -668,22 +619,5 @@ mod tests {
 
         let err = validate_iface_exists(Some("test")).unwrap_err().to_string();
         assert!(err.contains("network interface not found"))
-    }
-
-    #[test]
-    fn print_comparison_test() {
-        let ps = PingStats {
-            transmitted: 10,
-            received: 9,
-            loss_pct: 10.0,
-            rtt_min: 1.0,
-            rtt_avg: 2.0,
-            rtt_max: 3.0,
-        };
-
-        let out = print_comparison("enp5s0", 5, &ps);
-        assert!(out.contains("DURING CHAOS (enp5s0)"));
-        assert!(out.contains("transmitted"));
-        assert!(out.contains("loss"));
     }
 }
