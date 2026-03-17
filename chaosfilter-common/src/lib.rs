@@ -3,4 +3,4 @@
 //! Leave empty until there is a real type both userspace and eBPF need.
 
 
-const CHAOS_MARK: u32 = 1;
+pub const CHAOS_MARK: u32 = 1;

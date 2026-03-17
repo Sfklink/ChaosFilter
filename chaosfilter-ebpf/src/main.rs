@@ -9,7 +9,7 @@ use aya_ebpf::{
     programs::TcContext,
 };
 use aya_log_ebpf::info;
-
+use chaosfilter_common::CHAOS_MARK;
 
 #[map]
 static TARGET_CGROUPS: HashMap<u64, u8> = HashMap::with_max_entries(1024, 0);
