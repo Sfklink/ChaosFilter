@@ -29,6 +29,10 @@ pub struct MemoryConfig {
     prev_swap_max: Option<String>,
 }
 
+/*
+TODO:
+    Create validate.rs, and move validation functions there.
+ */
 pub fn validate_memory_config(plan: &Plan) -> Result<()> {
     if !plan.injectors.memory_config.enabled {
         return Ok(());

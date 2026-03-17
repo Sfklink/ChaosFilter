@@ -22,12 +22,12 @@ name = "example-plan"
 # Network interface to target (e.g. eth0, enp5s0, vethA)
 # Can set to "default" to select the current system default
 # network interface.
-iface = "wlp0s20f3"
+iface = "default"
 
 # Optional: cgroup path relative to /sys/fs/cgroup (cgroup v2)
 # Example: "77500" or "system.slice/my.service"
 
-cgroup = "chaos-test"
+cgroup = "0"
 
 # --------------------------------------------------
 # Schedule
