@@ -202,12 +202,16 @@ impl MemoryConfig {
             "post-apply cgroup state"
         );
 
-        let dur = plan.schedule.duration_s;
+    // Don't sleep here anymore.
+    // main.rs now controls how long the injectors stay active.
+
+    Ok(())
+        /* let dur = plan.schedule.duration_s;
         info!(duration_s = dur, "holding chaos");
         std::thread::sleep(std::time::Duration::from_secs(dur));
         info!("duration elapsed; reverting");
 
-        Ok(())
+        Ok(())*/ 
     }
 
     pub fn revert(&mut self) -> Result<()> {
