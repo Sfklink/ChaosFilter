@@ -120,7 +120,7 @@ impl NetworkConfig {
         let delay = format!("{delay_ms}ms");
         let loss = format!("{loss_percent}%");
 
-        println!("[network] tc: creating root prio qdisc");
+        debug!("[network] tc: creating root prio qdisc");
 
         let root = Command::new("tc")
             .args([
@@ -136,7 +136,7 @@ impl NetworkConfig {
             .output()
             .context("failed to execute tc (root prio)")?;
 
-        println!("[network] root prio status: {}", root.status);
+        debug!("[network] root prio status: {}", root.status);
 
         if !root.status.success() {
             eprintln!(
@@ -147,17 +147,11 @@ impl NetworkConfig {
             if !root_prio_exists(iface)? {
                 return Err(anyhow!("tc failed creating prio root qdisc on {}", iface));
             } else {
-                println!("[network] root prio already exists, continuing");
+                debug!("[network] root prio already exists, continuing");
             }
         }
 
-        println!(
-            "[network] tc: attaching netem; parent=1:2 delay={} loss={}",
-            delay, loss
-        );
-
-        // ---- NETEM CHILD ----
-        println!(
+        debug!(
             "[network] tc: attaching netem; parent=1:2 delay={} loss={}",
             delay, loss
         );
@@ -174,7 +168,7 @@ impl NetworkConfig {
             .output()
             .context("failed to execute tc (netem child)")?;
 
-        println!("[network] netem status: {}", netem.status);
+        debug!("[network] netem status: {}", netem.status);
 
         if !netem.status.success() {
             eprintln!(
@@ -185,7 +179,7 @@ impl NetworkConfig {
         }
 
 
-        println!("[network] tc: installing fw filter (mark=1 1:2)");
+        debug!("[network] tc: installing fw filter (mark=1 1:2)");
 
         let filter = Command::new("tc")
             .args([
@@ -200,7 +194,7 @@ impl NetworkConfig {
             .output()
             .context("failed to execute tc (fw filter)")?;
 
-        println!("[network] filter status: {}", filter.status);
+        debug!("[network] filter status: {}", filter.status);
 
         if !filter.status.success() {
             eprintln!(
@@ -214,26 +208,15 @@ impl NetworkConfig {
 
 
         // this is also new down here
-        println!("[network] calling attach_classifier, attempting to attach ebpf program.");
+        debug!("[network] calling attach_classifier, attempting to attach ebpf program.");
         let handle = attach_classifier(iface, network_cgroup_target)
             .context("failed to attach eBPF classifier")?;
 
         self.ebpf_handle = Some(handle);
-
-        //TODO: Remove debugger.
-
-
-        // this is also new down here
-        println!("[network] calling attach_classifier, attempting to attach ebpf program.");
-        let _handle = attach_classifier(iface, network_cgroup_target)
-            .context("failed to attach eBPF classifier")?;
-
-        //TODO: Remove debugger.
-
         self.applied = true;
         self.iface = Some(iface.to_string());
 
-        println!("[network] apply() complete");
+        debug!("[network] apply() complete");
 
         Ok(())
     }
@@ -468,14 +451,14 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     }
 
     let iface_str: &str = &iface;
-    println!("[network] run_plan({})", iface_str);
+    debug!("[network] run_plan({})", iface_str);
     // apply the mutators
     let mut qdisc = NetworkConfig::default();
     qdisc.apply(plan, iface_str)?;
 
     // Maintain our ctrl-c functionality
     let dev = iface.clone();
-    println!("[network] setting ctrl-c handler for safe quit");
+    debug!("[network] setting ctrl-c handler for safe quit");
     ctrlc::set_handler(move || {
         warn!(iface = %dev, "Ctrl-C received; removing qdisc and exiting");
         NetworkConfig::delete_root_qdisc(&dev);

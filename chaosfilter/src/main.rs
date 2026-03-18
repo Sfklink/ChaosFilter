@@ -7,7 +7,7 @@ use chaosfilter::injector::{block_delay, cpu_memory, network};
 use chaosfilter::injector::filesystem::{validate_fd_config, FilesystemInjector};
 
 use clap::{Parser, Subcommand};
-use std::{process,fs, path::{Path, PathBuf}};
+use std::{fs, path::{Path, PathBuf}};
 use toml_edit::{value, DocumentMut};
 use tracing::{debug, info};
 
