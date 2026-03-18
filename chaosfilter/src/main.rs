@@ -15,7 +15,6 @@ const CONFIG_TEMPLATE: &str =
     include_str!("../assets/schema_config.toml");
 
 fn main() {
-    env_logger::init();
 
     if let Err(e) = entry(std::env::args_os()) {
         eprintln!("{e:#}");

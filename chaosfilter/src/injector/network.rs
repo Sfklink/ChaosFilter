@@ -211,7 +211,6 @@ impl NetworkConfig {
         debug!("[network] calling attach_classifier, attempting to attach ebpf program.");
         let handle = attach_classifier(iface, network_cgroup_target)
             .context("failed to attach eBPF classifier")?;
-
         self.ebpf_handle = Some(handle);
         self.applied = true;
         self.iface = Some(iface.to_string());
@@ -459,16 +458,18 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     // Maintain our ctrl-c functionality
     let dev = iface.clone();
     debug!("[network] setting ctrl-c handler for safe quit");
+
     ctrlc::set_handler(move || {
         warn!(iface = %dev, "Ctrl-C received; removing qdisc and exiting");
         NetworkConfig::delete_root_qdisc(&dev);
         std::process::exit(130);
     })?;
-
-    info!(duration_s = plan.schedule.duration_s, "holding chaos");
-
+    
+    println!("[network] Freezing prgorgam at network for {} seconds", plan.schedule.duration_s);
+    std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
+    // ugh
     // Revert
-    qdisc.revert()?;
+    //qdisc.revert()?;
 
     Ok(())
 }

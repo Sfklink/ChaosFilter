@@ -97,8 +97,7 @@ pub struct Injectors {
     pub block_config: BlockConfig,
     #[serde(default)]
     pub filesystem_config: FileSystemConfig,
-    #[serde(default)]
-    pub ebpf_config: EbpfConfig,
+
 }
 
 /// Configuration for the `injector/qdisc.rs` injector.
@@ -120,6 +119,7 @@ pub struct NetworkConfig {
     #[serde(default)]
     pub loss_percent: f32,
 
+    #[serde(default)]
     pub network_ebpf_cgroup: Vec<u64>,
 }
 
@@ -185,18 +185,6 @@ pub struct FileSystemConfig {
     /// Must be > soft_limit or it will cause issues.
     #[serde(default)]
     pub hard_limit: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct EbpfConfig {
-    #[serde(default)]
-    pub enabled: bool,
-
-    #[serde(default)]
-    pub tc_probe: bool,
-
-    #[serde(default)]
-    pub target_iface: Option<String>,
 }
 
 
