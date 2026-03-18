@@ -103,7 +103,7 @@ impl NetworkConfig {
     /// # Panics
     /// May panic if `plan.targets.iface` is `None` (uses `unwrap()`).
     /// Callers should ensure the plan is valid (e.g., via [`validate_plan`]).
-     pub fn apply(&mut self, plan: &Plan, iface: &str) -> Result<()> {
+    pub fn apply(&mut self, plan: &Plan, iface: &str) -> Result<()> {
         let delay_ms = plan.injectors.network_config.delay_ms;
         let loss_percent = plan.injectors.network_config.loss_percent;
 
@@ -120,7 +120,7 @@ impl NetworkConfig {
         let delay = format!("{delay_ms}ms");
         let loss = format!("{loss_percent}%");
 
-        debug!("[network] tc: creating root prio qdisc");
+        debug!("creating root prio qdisc");
 
         let root = Command::new("tc")
             .args([
@@ -136,23 +136,23 @@ impl NetworkConfig {
             .output()
             .context("failed to execute tc (root prio)")?;
 
-        debug!("[network] root prio status: {}", root.status);
+        debug!("root prio status: {}", root.status);
 
         if !root.status.success() {
-            eprintln!(
-                "[network][ERR] root prio stderr:\n{}",
-                String::from_utf8_lossy(&root.stderr)
+            error!(
+                stderr = %String::from_utf8_lossy(&root.stderr),
+                "root prio stderr"
             );
 
             if !root_prio_exists(iface)? {
                 return Err(anyhow!("tc failed creating prio root qdisc on {}", iface));
             } else {
-                debug!("[network] root prio already exists, continuing");
+                debug!("root prio already exists, continuing");
             }
         }
 
         debug!(
-            "[network] tc: attaching netem; parent=1:2 delay={} loss={}",
+            "attaching netem; parent=1:2 delay={} loss={}",
             delay, loss
         );
 
@@ -168,54 +168,72 @@ impl NetworkConfig {
             .output()
             .context("failed to execute tc (netem child)")?;
 
-        debug!("[network] netem status: {}", netem.status);
+        debug!("netem status: {}", netem.status);
 
         if !netem.status.success() {
-            eprintln!(
-                "[network][ERR] netem stderr:\n{}",
-                String::from_utf8_lossy(&netem.stderr)
+            error!(
+                stderr = %String::from_utf8_lossy(&root.stderr),
+                "root prio stderr"
             );
             return Err(anyhow!("tc failed applying child netem on {}", iface));
         }
 
-
-        debug!("[network] tc: installing fw filter (mark=1 1:2)");
-
-        let filter = Command::new("tc")
-            .args([
-                "filter", "replace", "dev", iface,
-                "parent", "1:",
-                "protocol", "all",
-                "prio", "1",
-                "handle", "1",
-                "fw",
-                "flowid", "1:2",
-            ])
-            .output()
-            .context("failed to execute tc (fw filter)")?;
-
-        debug!("[network] filter status: {}", filter.status);
-
-        if !filter.status.success() {
-            eprintln!(
-                "[network][ERR] filter stderr:\n{}",
-                String::from_utf8_lossy(&filter.stderr)
-            );
-            return Err(anyhow!("tc failed installing fw filter on {}", iface));
-        }
-
         Self::show_qdisc_state(iface);
 
+        if network_cgroup_target.is_empty() {
+            debug!("no cgroup targets; installing match-all filter to netem band");
+            let filter = Command::new("tc")
+                .args([
+                    "filter", "add", "dev", iface,
+                    "parent", "1:", "protocol", "all",
+                    "u32", "match", "u32", "0", "0",
+                    "flowid", "1:2",
+                ])
+                .output()
+                .context("failed to execute tc (match-all filter)")?;
+ 
+            debug!("filter status: {}", filter.status);
+ 
+            if !filter.status.success() {
+                error!(stderr = %String::from_utf8_lossy(&filter.stderr), "filter stderr");
+                return Err(anyhow!(
+                    "tc failed installing match-all filter on {}: {}",
+                    iface,
+                    String::from_utf8_lossy(&filter.stderr)
+                ));
+            }
+        } else {
+            debug!("installing fw filter (mark=1 → 1:2)");
+            let filter = Command::new("tc")
+                .args([
+                    "filter", "replace", "dev", iface,
+                    "parent", "1:",
+                    "protocol", "all",
+                    "prio", "1",
+                    "handle", "1",
+                    "fw",
+                    "flowid", "1:2",
+                ])
+                .output()
+                .context("failed to execute tc (fw filter)")?;
+ 
+            debug!("filter status: {}", filter.status);
+ 
+            if !filter.status.success() {
+                error!(stderr = %String::from_utf8_lossy(&filter.stderr), "filter stderr");
+                return Err(anyhow!("tc failed installing fw filter on {}", iface));
+            }
+ 
+            debug!("calling attach_classifier, attempting to attach ebpf program.");
+            let handle = attach_classifier(iface, network_cgroup_target)
+                .context("failed to attach eBPF classifier")?;
+            self.ebpf_handle = Some(handle);
+        }
 
-        // this is also new down here
-        debug!("[network] calling attach_classifier, attempting to attach ebpf program.");
-        let handle = attach_classifier(iface, network_cgroup_target)
-            .context("failed to attach eBPF classifier")?;
-        self.ebpf_handle = Some(handle);
         self.applied = true;
         self.iface = Some(iface.to_string());
 
-        debug!("[network] apply() complete");
+        debug!("apply() complete");
 
         Ok(())
     }
@@ -450,14 +468,14 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     }
 
     let iface_str: &str = &iface;
-    debug!("[network] run_plan({})", iface_str);
+    debug!("run_plan({})", iface_str);
     // apply the mutators
     let mut qdisc = NetworkConfig::default();
     qdisc.apply(plan, iface_str)?;
 
     // Maintain our ctrl-c functionality
     let dev = iface.clone();
-    debug!("[network] setting ctrl-c handler for safe quit");
+    debug!("setting ctrl-c handler for safe quit");
 
     ctrlc::set_handler(move || {
         warn!(iface = %dev, "Ctrl-C received; removing qdisc and exiting");
@@ -465,11 +483,14 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
         std::process::exit(130);
     })?;
     
-    println!("[network] Freezing prgorgam at network for {} seconds", plan.schedule.duration_s);
+    info!(
+        duration_s = plan.schedule.duration_s, 
+        "freezing"
+    );
     std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
     // ugh
     // Revert
-    //qdisc.revert()?;
+    qdisc.revert()?;
 
     Ok(())
 }

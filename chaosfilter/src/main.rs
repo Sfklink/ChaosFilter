@@ -44,7 +44,7 @@ fn main() {
 ///     - Executes the plan via [`chaosfilter_controller::qdiscs::run_plan`].
 ///
 /// - For ['Commands::Init']
-///     - Outputs a .toml config file to CWD.
+///     - Outputs a .toml config file to eprintlnCWD.
 ///
 /// # Side Effects
 /// - Prints status messages to standard output.
