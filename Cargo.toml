@@ -2,7 +2,8 @@
 resolver = "2"
 members = [
     "chaosfilter"
-]
+, "chaosfilter-common", "chaosfilter-ebpf"]
+default-members = ["chaosfilter", "chaosfilter-common"]
 # At run time, the first problem to start is the CLI
 
 [workspace.package]
@@ -10,7 +11,6 @@ license = "MIT OR Apache-2.0"
 edition = "2024"
 
 [workspace.dependencies]
-
 anyhow = { version = "1", default-features = false }
 cargo_metadata = { version = "0.23.0", default-features = false }
 # `std` feature is currently required to build `clap`.
@@ -26,19 +26,19 @@ serde = { version = "1", default-features = false, features = ["derive"] }
 toml = "0.9.11"
 ctrlc = "3.5.1"
 chrono = { version = "0.4.43", default-features = false, features = ["clock"] }
-
-
-### Not necessary for this version.
-#aya = { git = "https://github.com/aya-rs/aya", default-features = false }
-#aya-build = { git = "https://github.com/aya-rs/aya", default-features = false }
-#aya-ebpf = { git = "https://github.com/aya-rs/aya", default-features = false }
-#aya-log = { git = "https://github.com/aya-rs/aya", default-features = false }
-#aya-log-ebpf = { git = "https://github.com/aya-rs/aya", default-features = false }
-#[profile.release.package.chaosfilter-ebpf]
-#debug = 2
-#codegen-units = 1
-
+### Aya Dependencies
+aya = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya-build = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya-ebpf = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya-log = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya-log-ebpf = { git = "https://github.com/aya-rs/aya", default-features = false }
 # Unit & Integration Tests Dependencies
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+
+[profile.release.package.chaosfilter-ebpf]
+debug = 2
+codegen-units = 1
+
+

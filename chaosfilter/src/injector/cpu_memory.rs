@@ -138,8 +138,8 @@ impl MemoryConfig {
             match read_pid_cgroup_v2(pid) {
                 Some(cur) if cur == cg => {
                     debug!(
-                        pid, 
-                        cgroup = %cg.display(), 
+                        pid,
+                        cgroup = %cg.display(),
                         "PID already in target cgroup, skipping move"
                     );
                 }
@@ -155,11 +155,11 @@ impl MemoryConfig {
         // CURSE YOU NEWLINES
         if let Some(v) = plan.injectors.memory_config.cpu_max.as_deref() {
             debug!(
-                raw = ?v, 
-                bytes = ?v.as_bytes(), 
+                raw = ?v,
+                bytes = ?v.as_bytes(),
                 "cpu.max raw value"
             );
-            
+
             write_line(cg.join("cpu.max"), v)
                 .with_context(|| format!("failed writing cpu.max='{}' at {}", v, cg.display()))?;
         }
@@ -225,8 +225,8 @@ impl MemoryConfig {
             .ok_or_else(|| anyhow!("internal error: target_cg missing"))?;
 
         info!(
-            cgroup = %cg.display(), 
-            pid, 
+            cgroup = %cg.display(),
+            pid,
             "reverting cgroup knobs"
         );
 
@@ -374,9 +374,9 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::plans::{Injectors, MemoryConfig as CliMemCfg, NetworkConfig as CliNetCfg, Plan, Schedule, Targets};
     use super::*;
     use tempfile::TempDir;
+    use crate::plans::{Injectors, MemoryConfig as MemCfg, NetworkConfig as NetCfg, Schedule, Targets};
 
     fn base_plan() -> Plan {
         Plan {
@@ -387,10 +387,10 @@ mod tests {
             },
             schedule: Schedule { duration_s: 0 },
             injectors: Injectors {
-                network_config: CliNetCfg::default(),
-                memory_config: CliMemCfg::default(),
+                network_config: NetCfg::default(),
+                memory_config: MemCfg::default(),
                 block_config: Default::default(),
-                filesystem_config: Default::default()
+                filesystem_config: Default::default(),
             },
         }
     }
@@ -478,7 +478,7 @@ mod tests {
     #[test]
     fn enable_controllers_on_parent_errors_when_no_parent() {
         let err = enable_controllers_on_parent(
-            Path::new("/"), 
+            Path::new("/"),
             &["cpu".to_string()]
         )
         .unwrap_err();

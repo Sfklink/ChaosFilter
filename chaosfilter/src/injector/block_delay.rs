@@ -1,14 +1,13 @@
 use crate::plans::Plan;
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
-use anyhow::{Result, bail};
-use libc;
-use std::io::Write;
+use std::process::Command;
 use std::thread;
 use std::time::Duration;
-use std::process::Command;
 use std::time::Instant;
+use anyhow::{Result, bail};
 use tracing::{debug, info, warn};
 
 fn major_minor(device_path: &str) -> Result<String> {
@@ -62,9 +61,9 @@ fn run_disk_test(label: &str) -> Result<f64> {
     let mbps = mb_written / duration;
 
     info!(
-        label, 
-        duration_secs = duration, 
-        throughput_mbps = mbps, 
+        label,
+        duration_secs = duration,
+        throughput_mbps = mbps,
         "disk test complete"
     );
 
@@ -75,7 +74,6 @@ fn run_disk_test(label: &str) -> Result<f64> {
 }
 
 pub fn run(plan: &Plan) -> Result<()> {
-
     // bunch of boring verification so you dont brick your system
     let cfg = &plan.injectors.block_config;
 
@@ -89,15 +87,15 @@ pub fn run(plan: &Plan) -> Result<()> {
     let device = cfg.device.as_ref().expect("Device must be specified");
     let major_minor = major_minor(device)?;
     info!(
-        device, 
-        major_minor, 
+        device,
+        major_minor,
         "resolved block device"
     );
 
     let base_path = Path::new("/sys/fs/cgroup/chaosfilter");
     let cgroup_path = base_path.join(&plan.name);
     info!(
-        cgroup = ?cgroup_path, 
+        cgroup = ?cgroup_path,
         "creating cgroup"
     );
 
@@ -107,7 +105,7 @@ pub fn run(plan: &Plan) -> Result<()> {
     }
 
     debug!(
-        base = ?base_path, 
+        base = ?base_path,
         "checking io controller availability"
     );
 
@@ -124,7 +122,7 @@ pub fn run(plan: &Plan) -> Result<()> {
         }
     } else {
         warn!(
-            path = ?chaos_subtree, 
+            path = ?chaos_subtree,
             "chaosfilter subtree_control not available yet"
         );
     }
@@ -132,12 +130,12 @@ pub fn run(plan: &Plan) -> Result<()> {
     if !cgroup_path.exists() {
         fs::create_dir(&cgroup_path)?;
         info!(
-            cgroup = ?cgroup_path, 
+            cgroup = ?cgroup_path,
             "created plan cgroup directory"
         );
     } else {
         debug!(
-            cgroup = ?cgroup_path, 
+            cgroup = ?cgroup_path,
             "plan cgroup already exists"
         );
     }
@@ -160,14 +158,14 @@ pub fn run(plan: &Plan) -> Result<()> {
     let procs_path = cgroup_path.join("cgroup.procs");
     fs::write(&procs_path, self_pid.to_string())?;
     info!(
-        pid = self_pid, 
-        cgroup = ?cgroup_path, 
+        pid = self_pid,
+        cgroup = ?cgroup_path,
         "moved current process into cgroup"
     );
 
     let current = fs::read_to_string(&io_max)?;
     debug!(
-        contents = current.trim(), 
+        contents = current.trim(),
         "current io.max"
     );
 
@@ -188,7 +186,7 @@ pub fn run(plan: &Plan) -> Result<()> {
     }
 
     debug!(
-        rule, 
+        rule,
         "applying throttle rule"
     );
 
@@ -199,7 +197,7 @@ pub fn run(plan: &Plan) -> Result<()> {
     }
 
     info!(
-        duration_s = plan.schedule.duration_s, 
+        duration_s = plan.schedule.duration_s,
         "throttling; holding"
     );
     thread::sleep(Duration::from_secs(1)); // short settle time
@@ -226,9 +224,7 @@ pub fn run(plan: &Plan) -> Result<()> {
         Experimental Speed: {:.2} MB/s\n\
         Performance Drop:   {:.2}% slower\n\
         =============================\n",
-        control_speed,
-        experimental_speed,
-        percent
+        control_speed, experimental_speed, percent
     );
 
     println!("{}", results);

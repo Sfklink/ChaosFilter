@@ -1,9 +1,8 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-
 /*
 Most likely going to add scheduler in here so we can fire sequentially.  Just has to deal with
 sequencing and variable intake.
@@ -48,12 +47,43 @@ impl Plan {
         let path = path.as_ref();
         let s = fs::read_to_string(path)
             .with_context(|| format!("failed to read config file: {}", path.display()))?;
-        let plan: Plan = toml::from_str(&s)
+
+        let mut plan: Plan = toml::from_str(&s)
             .with_context(|| format!("failed to parse TOML in: {}", path.display()))?;
+
+        fn get_default_iface() -> Option<String> {
+            let output = std::process::Command::new("ip")
+                .args(["route", "get", "8.8.8.8"])
+                .output()
+                .ok()?;
+
+            if !output.status.success() {
+                return None;
+            }
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+
+            stdout
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .windows(2)
+                .find(|w| w[0] == "dev")
+                .map(|w| w[1].to_string())
+        }
+
+        if let Some(iface) = plan.targets.iface.as_deref() {
+            if iface == "default" {
+                plan.targets.iface = Some(
+                    get_default_iface()
+                        .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?
+                );
+            }
+        }
+
         Ok(plan)
     }
-}
 
+}
 /// Injector configuration block.
 ///
 /// Each field represents configuration for a specific chaos mechanism.
@@ -66,7 +96,8 @@ pub struct Injectors {
     #[serde(default)]
     pub block_config: BlockConfig,
     #[serde(default)]
-    pub filesystem_config: FileSystemConfig
+    pub filesystem_config: FileSystemConfig,
+
 }
 
 /// Configuration for the `injector/qdisc.rs` injector.
@@ -87,6 +118,9 @@ pub struct NetworkConfig {
     /// Packet loss percentage (`0.0`–`100.0`).
     #[serde(default)]
     pub loss_percent: f32,
+
+    #[serde(default)]
+    pub network_ebpf_cgroup: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -153,6 +187,7 @@ pub struct FileSystemConfig {
     pub hard_limit: u64,
 }
 
+
 /// Target selection for chaos execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Targets {
@@ -175,7 +210,7 @@ pub struct Schedule {
 pub enum CommonCommand {
     Validate(RunConfigArgs),
     Chaos(RunConfigArgs),
-    Init
+    Init,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -185,6 +220,3 @@ pub struct RunConfigArgs {
     #[arg(short, long)]
     pub config: String,
 }
-
-
-

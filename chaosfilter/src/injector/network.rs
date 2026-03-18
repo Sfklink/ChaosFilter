@@ -6,6 +6,7 @@
 use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::process::{Command, Stdio};
+use crate::injector::ebpf::{attach_classifier, EbpfHandle};
 use tracing::{debug, error, info, warn};
 
 /// tc netem injector state.
@@ -22,6 +23,7 @@ pub struct NetworkConfig {
     pub duration_s: u64,
     pub netem_delay_ms: i32,
     pub netem_loss_percent: f64,
+    pub ebpf_handle: Option<EbpfHandle>,
 }
 
 /// Summary statistics parsed from `ping` output.
@@ -105,35 +107,136 @@ impl NetworkConfig {
         let delay_ms = plan.injectors.network_config.delay_ms;
         let loss_percent = plan.injectors.network_config.loss_percent;
 
+        // This is new
+        let network_cgroup_target = &plan.injectors.network_config.network_ebpf_cgroup;
+
         info!(
             iface,
             delay_ms,
             loss_percent,
             "applying netem qdisc"
-        );
+            );
 
         let delay = format!("{delay_ms}ms");
         let loss = format!("{loss_percent}%");
 
-        let status = Command::new("tc")
-            .args([
-                "qdisc", "replace", "dev", iface, "root", "netem",
-                "delay", &delay, "loss", &loss,
-            ])
-            .status()
-            .context("failed to execute tc (apply)")?;
+        debug!("creating root prio qdisc");
 
-        if !status.success() {
-            return Err(anyhow!("tc failed applying netem on {} (need sudo)", iface));
+        let root = Command::new("tc")
+            .args([
+                "qdisc", "replace", "dev", iface,
+                "root", "handle", "1:",
+                "prio", "bands", "2",
+                "priomap",
+                "0","0","0","0",
+                "0","0","0","0",
+                "0","0","0","0",
+                "0","0","0","0",
+            ])
+            .output()
+            .context("failed to execute tc (root prio)")?;
+
+        debug!("root prio status: {}", root.status);
+
+        if !root.status.success() {
+            error!(
+                stderr = %String::from_utf8_lossy(&root.stderr),
+                "root prio stderr"
+            );
+
+            if !root_prio_exists(iface)? {
+                return Err(anyhow!("tc failed creating prio root qdisc on {}", iface));
+            } else {
+                debug!("root prio already exists, continuing");
+            }
+        }
+
+        debug!(
+            "attaching netem; parent=1:2 delay={} loss={}",
+            delay, loss
+        );
+
+        let netem = Command::new("tc")
+            .args([
+                "qdisc", "replace", "dev", iface,
+                "parent", "1:2",
+                "handle", "20:",
+                "netem",
+                "delay", &delay,
+                "loss", &loss,
+            ])
+            .output()
+            .context("failed to execute tc (netem child)")?;
+
+        debug!("netem status: {}", netem.status);
+
+        if !netem.status.success() {
+            error!(
+                stderr = %String::from_utf8_lossy(&root.stderr),
+                "root prio stderr"
+            );
+            return Err(anyhow!("tc failed applying child netem on {}", iface));
         }
 
         Self::show_qdisc_state(iface);
 
+        if network_cgroup_target.is_empty() {
+            debug!("no cgroup targets; installing match-all filter to netem band");
+            let filter = Command::new("tc")
+                .args([
+                    "filter", "add", "dev", iface,
+                    "parent", "1:", "protocol", "all",
+                    "u32", "match", "u32", "0", "0",
+                    "flowid", "1:2",
+                ])
+                .output()
+                .context("failed to execute tc (match-all filter)")?;
+ 
+            debug!("filter status: {}", filter.status);
+ 
+            if !filter.status.success() {
+                error!(stderr = %String::from_utf8_lossy(&filter.stderr), "filter stderr");
+                return Err(anyhow!(
+                    "tc failed installing match-all filter on {}: {}",
+                    iface,
+                    String::from_utf8_lossy(&filter.stderr)
+                ));
+            }
+        } else {
+            debug!("installing fw filter (mark=1 → 1:2)");
+            let filter = Command::new("tc")
+                .args([
+                    "filter", "replace", "dev", iface,
+                    "parent", "1:",
+                    "protocol", "all",
+                    "prio", "1",
+                    "handle", "1",
+                    "fw",
+                    "flowid", "1:2",
+                ])
+                .output()
+                .context("failed to execute tc (fw filter)")?;
+ 
+            debug!("filter status: {}", filter.status);
+ 
+            if !filter.status.success() {
+                error!(stderr = %String::from_utf8_lossy(&filter.stderr), "filter stderr");
+                return Err(anyhow!("tc failed installing fw filter on {}", iface));
+            }
+ 
+            debug!("calling attach_classifier, attempting to attach ebpf program.");
+            let handle = attach_classifier(iface, network_cgroup_target)
+                .context("failed to attach eBPF classifier")?;
+            self.ebpf_handle = Some(handle);
+        }
+
         self.applied = true;
         self.iface = Some(iface.to_string());
+
+        debug!("apply() complete");
+
         Ok(())
     }
-
     /// Restores a deterministic baseline root qdisc on `iface`.
     ///
     /// This replaces the current root qdisc with `fq_codel`. It does **not**
@@ -261,7 +364,7 @@ impl NetworkConfig {
 
         // Verbose verification
         Self::show_qdisc_state(iface);
-
+        self.ebpf_handle = None;
         self.applied = false;
         self.iface = None;
 
@@ -347,7 +450,6 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
         debug!("network injector not enabled; skipping");
         return Ok(());
     }
-    let ping_target = "8.8.8.8";
 
     // need to resolve iface ONE time here, because we were getting it in multiple spots and
     // this was causing a grotesque error where we couldn't declare things publically
@@ -366,29 +468,27 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     }
 
     let iface_str: &str = &iface;
-
-
+    debug!("run_plan({})", iface_str);
     // apply the mutators
     let mut qdisc = NetworkConfig::default();
     qdisc.apply(plan, iface_str)?;
 
     // Maintain our ctrl-c functionality
     let dev = iface.clone();
+    debug!("setting ctrl-c handler for safe quit");
+
     ctrlc::set_handler(move || {
         warn!(iface = %dev, "Ctrl-C received; removing qdisc and exiting");
         NetworkConfig::delete_root_qdisc(&dev);
         std::process::exit(130);
     })?;
-
-    info!(duration_s = plan.schedule.duration_s, "holding chaos");
-
-    // Ping using resolved iface (NOT plan.targets.iface)
-    let chaos_stats = run_ping_test_with_iface(iface_str, plan.schedule.duration_s, ping_target)
-        .context("Failed to collect chaos ping stats")?;
-
-    // Report using resolved iface
-    print_comparison(iface_str, plan.schedule.duration_s, &chaos_stats);
     
+    info!(
+        duration_s = plan.schedule.duration_s, 
+        "freezing"
+    );
+    std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
+    // ugh
     // Revert
     qdisc.revert()?;
 
@@ -437,123 +537,23 @@ pub fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Executes a ping test and parses packet statistics.
-///
-/// This function runs a timed ping using the interface defined
-/// in the provided [`Plan`] and extracts transmission, loss,
-/// and RTT metrics.
-///
-/// # Arguments
-/// * `plan` - Chaos plan containing target interface and duration.
-/// * `target` - Destination host or IP address to ping.
-///
-/// # Returns
-/// Returns `Some(PingStats)` if:
-/// - The ping command executes successfully, and
-/// - Output can be parsed correctly.
-///
-/// Returns `None` if:
-/// - The interface is not set in the plan,
-/// - The command fails,
-/// - Or parsing fails.
-///
-/// # Side Effects
-/// Executes:
-/// - `ping -I <iface> -w <duration> <target>`
-///
-/// # Notes
-/// RTT values are reported in milliseconds.
-/// Packet loss is a percentage in the range `0.0..=100.0`.
-pub fn run_ping_test_with_iface(iface: &str, duration_s: u64, target: &str) -> Option<PingStats> {
-    let output = Command::new("ping")
-        .args(["-I", iface, "-w", &duration_s.to_string(), target])
+fn root_prio_exists(iface: &str) -> Result<bool> {
+    let output = Command::new("tc")
+        .args(["qdisc", "show", "dev", iface])
         .output()
-        .ok()?;
+        .context("failed to execute tc qdisc show")?;
 
-    // If ping failed (e.g. invalid iface), don't return misleading zeros.
     if !output.status.success() {
-        return None;
+        return Ok(false);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let mut transmitted = 0;
-    let mut received = 0;
-    let mut loss_pct = 0.0;
-    let mut rtt_min = 0.0;
-    let mut rtt_avg = 0.0;
-    let mut rtt_max = 0.0;
-
-    for line in stdout.lines() {
-        if line.contains("packets transmitted") {
-            let parts: Vec<&str> = line.split(',').collect();
-            transmitted = parts.get(0)?.trim().split(' ').next()?.parse().ok()?;
-            received = parts.get(1)?.trim().split(' ').next()?.parse().ok()?;
-            loss_pct = parts.get(2)?.trim().split('%').next()?.parse().ok()?;
-        }
-
-        if line.contains("rtt min/avg/max") {
-            let stats = line.split('=').nth(1)?.trim();
-            let nums: Vec<&str> = stats.split('/').collect();
-            rtt_min = nums.get(0)?.parse().ok()?;
-            rtt_avg = nums.get(1)?.parse().ok()?;
-            rtt_max = nums.get(2)?.parse().ok()?;
-        }
-    }
-
-    Some(PingStats {
-        transmitted,
-        received,
-        loss_pct,
-        rtt_min,
-        rtt_avg,
-        rtt_max,
-    })
+    Ok(stdout
+        .lines()
+        .any(|line| line.contains("qdisc prio") && line.contains("root") && line.contains("1:")))
 }
 
-
-pub fn print_comparison(
-    iface: &str,
-    duration: u64,
-    //control: &PingStats,
-    modified: &PingStats,
-) -> String {
-    let output = format!(
-        "\n===== Network Comparison (Duration: {duration} seconds) =====
-
-DURING CHAOS ({iface}):
-  transmitted : {md_tx}
-  received    : {md_rx}
-  loss %      : {md_loss}
-  rtt (ms)    : min {md_min} | avg {md_avg} | max {md_max}
-",
-        // Just hiding this little guy down here because this was implemented nasty as hell and I hate it
-        // this is what happens when you make no-value-added updates to the code and then merge them into main
-        // BEFORE CHAOS (baseline of {iface}):
-        //   transmitted : {ct_tx}
-        //   received    : {ct_rx}
-        //   loss %      : {ct_loss}
-        //   rtt (ms)    : min {ct_min} | avg {ct_avg} | max {ct_max}
-
-        //         ct_tx = control.transmitted,
-        //         ct_rx = control.received,
-        //         ct_loss = control.loss_pct,
-        //         ct_min = control.rtt_min,
-        //         ct_avg = control.rtt_avg,
-        //         ct_max = control.rtt_max,
-        md_tx = modified.transmitted,
-        md_rx = modified.received,
-        md_loss = modified.loss_pct,
-        md_min = modified.rtt_min,
-        md_avg = modified.rtt_avg,
-        md_max = modified.rtt_max,
-    );
-
-    println!("{}", output);
-    output
-}
-
-fn get_default_iface() -> Option<String> {
+pub fn get_default_iface() -> Option<String> {
     let output = std::process::Command::new("ip")
         .args(["route", "get", "8.8.8.8"])
         .output()
@@ -593,11 +593,9 @@ mod tests {
         assert!(err.contains("network interface not found"));
     }
 
-
     #[test]
     #[cfg(target_os = "linux")]
     fn validate_iface_exists_success() {
-
         // there does exist the change of ip not being available, which can happen
         // in the case that we are not running as root
 
@@ -612,8 +610,7 @@ mod tests {
             return;
         }
 
-        let iface = get_default_iface()
-            .expect("Could not determine default interface");
+        let iface = get_default_iface().expect("Could not determine default interface");
 
         validate_iface_exists(Some(&iface)).unwrap();
     }
@@ -626,25 +623,8 @@ mod tests {
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
-        
+
         let err = validate_iface_exists(Some("test")).unwrap_err().to_string();
         assert!(err.contains("network interface not found"))
-    }
-
-    #[test]
-    fn print_comparison_test() {
-        let ps = PingStats {
-            transmitted: 10,
-            received: 9,
-            loss_pct: 10.0,
-            rtt_min: 1.0,
-            rtt_avg: 2.0,
-            rtt_max: 3.0,
-        };
-
-        let out = print_comparison("enp5s0", 5, &ps);
-        assert!(out.contains("DURING CHAOS (enp5s0)"));
-        assert!(out.contains("transmitted"));
-        assert!(out.contains("loss"));
     }
 }

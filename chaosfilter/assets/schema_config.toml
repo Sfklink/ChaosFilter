@@ -56,6 +56,9 @@ enabled = false
 # Packet loss percentage (0.0 - 100.0)
 # loss_percent = 10.0
 
+# Cgroup attach point for network classifier.
+# Accepts cgroup IDs, i.e.:     [117, 419, 666]
+# network_ebpf_cgroup = [24059]
 # -----------------------------
 # CPU + Memory (cgroup v2)
 # -----------------------------

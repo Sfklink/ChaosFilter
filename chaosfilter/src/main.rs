@@ -1,11 +1,13 @@
+use anyhow::Context;
+
 use chaosfilter::plans::{Plan, RunConfigArgs};
 use chaosfilter::injector::cpu_memory::validate_memory_config;
 use chaosfilter::injector::network::validate_iface_exists;
 use chaosfilter::injector::{block_delay, cpu_memory, network};
 use chaosfilter::injector::filesystem::{validate_fd_config, FilesystemInjector};
+
 use clap::{Parser, Subcommand};
-use std::{process,fs, path::{Path, PathBuf}};
-use anyhow::Context;
+use std::{fs, path::{Path, PathBuf}};
 use toml_edit::{value, DocumentMut};
 use tracing::{debug, info};
 
@@ -13,9 +15,10 @@ const CONFIG_TEMPLATE: &str =
     include_str!("../assets/schema_config.toml");
 
 fn main() {
+
     if let Err(e) = entry(std::env::args_os()) {
-        eprintln!("{:#}", e);
-        process::exit(1);
+        eprintln!("{e:#}");
+        std::process::exit(1);
     }
 }
 
@@ -41,7 +44,7 @@ fn main() {
 ///     - Executes the plan via [`chaosfilter_controller::qdiscs::run_plan`].
 ///
 /// - For ['Commands::Init']
-///     - Outputs a .toml config file to CWD.
+///     - Outputs a .toml config file to eprintlnCWD.
 ///
 /// # Side Effects
 /// - Prints status messages to standard output.
@@ -207,13 +210,11 @@ pub fn output_config(
         doc["injectors"]["memory_config"]["enabled"] = value(false);
     }
 
-
     fs::write(&abs_path, doc.to_string())
         .with_context(|| format!("failed to write config to {}", abs_path.display()))?;
 
     Ok(abs_path)
 }
-
 
 /// Top-level CLI argument structure.
 ///
@@ -272,7 +273,7 @@ pub enum Commands {
         /// Network interface (positional form)
         #[arg(value_name = "IFACE")]
         iface_pos: Option<String>,
-    }
+    },
 }
 
 #[cfg(test)]
