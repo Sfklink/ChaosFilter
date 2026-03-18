@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
 use aya::{
     maps::HashMap,
-    programs::{tc,
-               SchedClassifier, TcAttachType},
+    programs::{SchedClassifier, TcAttachType},
     Ebpf,
 };
 use aya_log::EbpfLogger;
