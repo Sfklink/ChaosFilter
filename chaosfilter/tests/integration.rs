@@ -1,7 +1,7 @@
 use assert_cmd::{assert::Assert, cargo};
 use predicates::prelude::predicate;
-use tempfile::NamedTempFile;
 use std::io::Write;
+use tempfile::NamedTempFile;
 
 fn get_default_iface() -> Option<String> {
     let output = std::process::Command::new("ip")
@@ -25,7 +25,8 @@ fn get_default_iface() -> Option<String> {
 }
 
 fn create_chaosfilter_toml(iface: &str) -> String {
-    return format!(r#"
+    return format!(
+        r#"
 name = "test"
 [targets]
 iface = "{iface}"
@@ -46,12 +47,19 @@ move_pid = true
 enable = ["cpu", "memory"]
 cpu_max = "20000 100000"
 mem_max = "1G"
-"#);
+"#
+    );
 }
 
 fn print_output(cmd: Assert) {
-    eprint!("----- stdout -----\n{}", String::from_utf8_lossy(&cmd.get_output().stdout));
-    eprintln!("----- stderr -----\n{}", String::from_utf8_lossy(&cmd.get_output().stderr));
+    eprint!(
+        "----- stdout -----\n{}",
+        String::from_utf8_lossy(&cmd.get_output().stdout)
+    );
+    eprintln!(
+        "----- stderr -----\n{}",
+        String::from_utf8_lossy(&cmd.get_output().stderr)
+    );
 }
 
 #[test]
@@ -72,13 +80,15 @@ fn validate_ok() {
 
 #[test]
 fn validate_fail() {
-    let toml = format!(r#"
+    let toml = format!(
+        r#"
 name = "test"
 
 [targets]
 iface = ""
 cgroup = "test"
-"#);
+"#
+    );
 
     let mut file = NamedTempFile::new().unwrap();
     write!(file, "{toml}").unwrap();
@@ -94,11 +104,11 @@ cgroup = "test"
 #[test]
 fn validate_iface_invalid_iface() {
     let toml = create_chaosfilter_toml("test");
-    
+
     let mut file = NamedTempFile::new().unwrap();
     write!(file, "{toml}").unwrap();
 
-    let cmd =cargo::cargo_bin_cmd!("chaosfilter")
+    let cmd = cargo::cargo_bin_cmd!("chaosfilter")
         .args(["validate", "--config", file.path().to_str().unwrap()])
         .assert()
         .failure()
@@ -111,7 +121,7 @@ fn validate_iface_invalid_iface() {
 fn run_chaos_plan() {
     let iface = get_default_iface().unwrap();
     let toml = create_chaosfilter_toml(&iface);
-    
+
     let mut file = NamedTempFile::new().unwrap();
     write!(file, "{toml}").unwrap();
 
@@ -126,7 +136,7 @@ fn run_chaos_plan() {
 #[test]
 fn run_chaos_plan_invalid_iface() {
     let toml = create_chaosfilter_toml("test");
-    
+
     let mut file = NamedTempFile::new().unwrap();
     write!(file, "{toml}").unwrap();
 

@@ -48,14 +48,17 @@ duration_s = 10
 enabled = false
 
 # Optional override (defaults to targets.iface)
-target_iface = "default"
+# target_iface = "default"
 
 # Network delay (ms)
-delay_ms = 100
+# delay_ms = 100
 
 # Packet loss percentage (0.0 - 100.0)
-loss_percent = 10.0
+# loss_percent = 10.0
 
+# Cgroup attach point for network classifier.
+# Accepts cgroup IDs, i.e.:     [117, 419, 666]
+# network_ebpf_cgroup = [24059]
 # -----------------------------
 # CPU + Memory (cgroup v2)
 # -----------------------------
@@ -63,28 +66,28 @@ loss_percent = 10.0
 enabled = false
 
 # PID to constrain
-target_pid = 0
+# target_pid = 0
 
 # Move PID into target cgroup before applying limits
-move_pid = true
+# move_pid = true
 
 # Controllers to enable in cgroup.subtree_control
-enable = ["cpu", "memory"]
+# enable = ["cpu", "memory"]
 
 # CPU quota/period (e.g. "20000 100000" = 20% of one CPU)
-cpu_max = "20000 100000"
+# cpu_max = "20000 100000"
 
 # CPU weight (1 - 10000)
-cpu_weight = 200
+# cpu_weight = 200
 
 # Hard memory limit
-mem_max = "1G"
+# mem_max = "1G"
 
 # Soft memory pressure threshold
-mem_high = "800M"
+# mem_high = "800M"
 
 # Swap limit ("0" disables swap, "max" allows unlimited)
-swap_max = "0"
+# swap_max = "0"
 
 # -----------------------------
 # Block I/O (cgroup v2 io)
@@ -92,13 +95,31 @@ swap_max = "0"
 
 # Block I/O Injector
 [injectors.block_config]
-enabled = true
+enabled = false
 
 # The target device that the I/O constraints will be applied to.
-device = "/dev/sda"
+# device = "/dev/sda"
 
 # Read bandwidth limit (bytes per second).
-rbps = 10485760
+# rbps = 10485760
 
 # Write bandwidth limit (bytes per second).
-wbpd = 10485760
+# wbpd = 10485760
+
+# -----------------------------
+# File Descriptor Exhaustion
+# -----------------------------
+
+# File Descriptor Injector
+[injectors.filesystem_config]
+enabled = false
+
+# target cgroup is read from [targets.cgroup]
+# Every PID in that cgroup will have it's RLIMIT_NOFILE's
+# soft_limit and hard_limit lowered for the duration specified
+
+# What the soft limit will be lowered too (do not set too low)
+# soft_limit = 2
+
+# What the hard limit will be lowered too (do not set too low)
+# hard_limit = 4

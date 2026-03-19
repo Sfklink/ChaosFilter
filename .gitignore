@@ -26,6 +26,12 @@ target
 running_and_doing_stuff_heehee.txt
 
 results
+/demo_run.sh
+/pid_cgroup_scratch.txt
+cf-config.toml
+Cargo.lock
+cf-config.toml
+Cargo.lock
 
 
 # demo results so the demo can show them at the end
