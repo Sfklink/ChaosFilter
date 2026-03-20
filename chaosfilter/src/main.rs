@@ -7,9 +7,8 @@ use chaosfilter::injector::{block_delay, cpu_memory, network, ChaosInjector};
 use chaosfilter::injector::filesystem::{validate_fd_config, FilesystemInjector};
 
 use clap::{Parser, Subcommand};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::mpsc;
+use std::time::Duration;
 use std::{fs, path::{Path, PathBuf}};
 use toml_edit::{value, DocumentMut};
 use tracing::{debug, info};
@@ -137,56 +136,45 @@ where
     }
 }
 
-fn wait_duration_or_ctrl_c(duration_s: u64) -> anyhow::Result<()> {
-    // `ctrlc` handler flips this flag; the main loop polls it and exits the hold early.
-    let stop = Arc::new(AtomicBool::new(false));
-    let flag = stop.clone();
+pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
+    let injectors: Vec<Box<dyn ChaosInjector>> = vec![
+        Box::new(cpu_memory::MemoryInjector::default()),
+        Box::new(network::NetworkInjector::default()),
+        Box::new(block_delay::BlockDelayInjector::default()),
+        Box::new(FilesystemInjector::default()),
+    ];
+
+    let mut active_injectors: Vec<Box<dyn ChaosInjector>> = Vec::new();
+
+    for mut injector in injectors {
+        let enabled = match injector.name() {
+            "memory" => plan.injectors.memory_config.enabled,
+            "network" => plan.injectors.network_config.enabled,
+            "block_delay" => plan.injectors.block_config.enabled,
+            "filesystem" => plan.injectors.filesystem_config.enabled,
+            _ => false,
+        };
+
+        if enabled {
+            injector
+                .apply(plan)
+                .with_context(|| format!("apply failed ({})", injector.name()))?;
+            active_injectors.push(injector);
+        }
+    }
+
+    let (ctrlc_tx, ctrlc_rx) = mpsc::channel::<()>();
     ctrlc::set_handler(move || {
-        flag.store(true, Ordering::SeqCst);
+        let _ = ctrlc_tx.send(());
     })?;
 
-    let deadline = Instant::now() + Duration::from_secs(duration_s);
-    while Instant::now() < deadline {
-        if stop.load(Ordering::SeqCst) {
-            // Hold ends early; cleanup will still run in `run_plan`.
-            info!("interrupt received; ending hold early");
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    Ok(())
-}
+    let sleep_deadline = Duration::from_secs(plan.schedule.duration_s);
+    let _ = ctrlc_rx.recv_timeout(sleep_deadline);
 
-pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
-    // Collect all enabled injectors first so apply/revert are consistent and ordered.
-    let mut injectors: Vec<Box<dyn ChaosInjector>> = Vec::new();
-
-    if plan.injectors.memory_config.enabled {
-        injectors.push(Box::new(cpu_memory::MemoryInjector::default()));
-    }
-    if plan.injectors.network_config.enabled {
-        injectors.push(Box::new(network::NetworkInjector::default()));
-    }
-    if plan.injectors.block_config.enabled {
-        injectors.push(Box::new(block_delay::BlockDelayInjector::default()));
-    }
-    if plan.injectors.filesystem_config.enabled {
-        injectors.push(Box::new(FilesystemInjector::default()));
-    }
-
-    for inj in injectors.iter_mut() {
-        // Apply every enabled injector before starting the hold window.
-        inj.apply(plan)
-            .with_context(|| format!("apply failed ({})", inj.name()))?;
-    }
-
-    // Hold chaos until `duration_s` elapses, or Ctrl-C is pressed.
-    wait_duration_or_ctrl_c(plan.schedule.duration_s)?;
-
-    for inj in injectors.iter_mut() {
-        // Revert all injectors after the hold window.
-        inj.revert()
-            .with_context(|| format!("revert failed ({})", inj.name()))?;
+    for mut injector in active_injectors {
+        injector
+            .revert()
+            .with_context(|| format!("revert failed ({})", injector.name()))?;
     }
 
     Ok(())
