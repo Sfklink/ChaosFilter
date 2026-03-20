@@ -17,7 +17,7 @@ use tracing::{debug, error, info, warn};
 // Here, we are making the mistake of supplying domain logic to itself internally, we don't like that.
 // It takes in arguments, it does the thing.  Right now, this stinks, and is not testable.
 #[derive(Default)]
-pub struct NetworkConfig {
+pub struct NetworkInjector {
     applied: bool,
     iface: Option<String>,
     pub duration_s: u64,
@@ -40,7 +40,7 @@ pub struct PingStats {
     pub rtt_max: f32,
 }
 
-impl NetworkConfig {
+impl NetworkInjector {
     /// Prints the current qdisc state for `iface` (best effort).
     ///
     /// This helper is intentionally non-fatal: failures are logged as warnings
@@ -78,7 +78,7 @@ impl NetworkConfig {
 
     /// Applies `tc netem` according to `plan.injectors.qdisc_netem`.
     ///
-    /// This method updates internal injector state so that [`NetworkConfig::revert`]
+    /// This method updates internal injector state so that [`NetworkInjector::revert`]
     /// can undo changes later.
     ///
     /// # Arguments
@@ -260,7 +260,7 @@ impl NetworkConfig {
     /// Failures are reported via printed messages.
     ///
     /// # Notes
-    /// `fq_codel` is used as a known baseline so [`NetworkConfig::revert`] can be deterministic.
+    /// `fq_codel` is used as a known baseline so [`NetworkInjector::revert`] can be deterministic.
     pub fn create_restore_root(iface: &str) {
         let status = Command::new("tc")
             .args(["qdisc", "replace", "dev", iface, "root", "fq_codel"])
@@ -338,8 +338,8 @@ impl NetworkConfig {
     ///
     /// # Side Effects
     /// If chaos was applied:
-    /// - Restores a baseline root qdisc via [`NetworkConfig::create_restore_root`].
-    /// - Prints verification output via [`NetworkConfig::show_qdisc_state`].
+    /// - Restores a baseline root qdisc via [`NetworkInjector::create_restore_root`].
+    /// - Prints verification output via [`NetworkInjector::show_qdisc_state`].
     /// - Clears internal state (`applied`, `iface`).
     ///
     /// # Requires
@@ -415,84 +415,37 @@ impl NetworkConfig {
     }
 }
 
-/// Runs the plan end-to-end (baseline → apply → hold → revert).
-///
-/// This is the one-shot entrypoint used by the CLI to execute network chaos
-/// and produce a basic “before vs during” ping comparison report.
-///
-/// # Arguments
-/// * `plan` - Chaos plan to run.
-///
-/// # Returns
-/// Returns `Ok(())` after:
-/// - Baseline ping stats are collected,
-/// - Chaos is applied and measured,
-/// - And cleanup/revert succeeds.
-///
-/// # Side Effects
-/// - Executes `ping` to collect baseline and chaos metrics.
-/// - Applies and reverts system-level chaos via [`NetworkConfig`].
-/// - Prints progress and a comparison report to stdout.
-///
-/// # Requires
-/// - A valid [`Plan`] (validated by [`validate_plan`]).
-/// - CAP_NET_ADMIN privileges (typically `sudo`) to modify qdiscs.
-/// - Network connectivity to the ping target (currently `8.8.8.8`).
-///
-/// # Errors
-/// Returns an error if:
-/// - Plan validation fails.
-/// - `targets.iface` is missing.
-/// - Baseline or chaos ping stats cannot be collected.
-/// - Applying or reverting the qdisc fails.
-pub fn run_plan(plan: &Plan) -> Result<()> {
-    if !plan.injectors.network_config.enabled {
-        debug!("network injector not enabled; skipping");
-        return Ok(());
+impl crate::injector::ChaosInjector for NetworkInjector {
+    fn name(&self) -> &'static str {
+        "network"
     }
 
-    // need to resolve iface ONE time here, because we were getting it in multiple spots and
-    // this was causing a grotesque error where we couldn't declare things publically
-    // and except them to cooperate between functions
+    fn apply(&mut self, plan: &Plan) -> Result<()> {
+        if !plan.injectors.network_config.enabled {
+            debug!("network injector not enabled; skipping");
+            return Ok(());
+        }
 
-    let mut iface = plan
-        .targets
-        .iface
-        .as_deref()
-        .ok_or_else(|| anyhow!("targets.iface required for ping report"))?
-        .to_string();
+        let mut iface = plan
+            .targets
+            .iface
+            .as_deref()
+            .ok_or_else(|| anyhow!("targets.iface required for ping report"))?
+            .to_string();
 
-    if iface == "default" {
-        iface = get_default_iface()
-            .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?;
+        if iface == "default" {
+            iface = get_default_iface()
+                .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?;
+        }
+
+        let iface_str: &str = &iface;
+        debug!("run_plan({})", iface_str);
+        NetworkInjector::apply(self, plan, iface_str)
     }
 
-    let iface_str: &str = &iface;
-    debug!("run_plan({})", iface_str);
-    // apply the mutators
-    let mut qdisc = NetworkConfig::default();
-    qdisc.apply(plan, iface_str)?;
-
-    // Maintain our ctrl-c functionality
-    let dev = iface.clone();
-    debug!("setting ctrl-c handler for safe quit");
-
-    ctrlc::set_handler(move || {
-        warn!(iface = %dev, "Ctrl-C received; removing qdisc and exiting");
-        NetworkConfig::delete_root_qdisc(&dev);
-        std::process::exit(130);
-    })?;
-    
-    info!(
-        duration_s = plan.schedule.duration_s, 
-        "freezing"
-    );
-    std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
-    // ugh
-    // Revert
-    qdisc.revert()?;
-
-    Ok(())
+    fn revert(&mut self) -> Result<()> {
+        NetworkInjector::revert(self)
+    }
 }
 
 /// Validates that a network interface exists on the host.

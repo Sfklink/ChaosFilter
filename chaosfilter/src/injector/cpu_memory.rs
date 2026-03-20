@@ -13,7 +13,7 @@ use std::{
 use tracing::{debug, info, warn};
 
 #[derive(Default)]
-pub struct MemoryConfig {
+pub struct MemoryInjector {
     applied: bool,
 
     // what we operated on
@@ -78,7 +78,7 @@ pub fn validate_memory_config(plan: &Plan) -> Result<()> {
     Ok(())
 }
 
-impl MemoryConfig {
+impl MemoryInjector {
     //ugly debuggers dont even look at it
 
     fn assert_domain_cgroup(cg: &Path) -> Result<()> {
@@ -164,13 +164,6 @@ impl MemoryConfig {
                 .with_context(|| format!("failed writing cpu.max='{}' at {}", v, cg.display()))?;
         }
 
-        // write knobs (only if present)
-        debug!("writing cpu.weight");
-        if let Some(v) = plan.injectors.memory_config.cpu_max.as_deref() {
-            write_line(cg.join("cpu.max"), v)
-                .with_context(|| format!("failed writing cpu.max='{}' at {}", v, cg.display()))?;
-        }
-
         debug!("writing cpu.weight");
         if let Some(w) = plan.injectors.memory_config.cpu_weight {
             write_line(cg.join("cpu.weight"), &w.to_string())?;
@@ -202,16 +195,7 @@ impl MemoryConfig {
             "post-apply cgroup state"
         );
 
-    // Don't sleep here anymore.
-    // main.rs now controls how long the injectors stay active.
-
-    Ok(())
-        /* let dur = plan.schedule.duration_s;
-        info!(duration_s = dur, "holding chaos");
-        std::thread::sleep(std::time::Duration::from_secs(dur));
-        info!("duration elapsed; reverting");
-
-        Ok(())*/ 
+        Ok(())
     }
 
     pub fn revert(&mut self) -> Result<()> {
@@ -358,22 +342,18 @@ fn read_pid_cgroup_v2(pid: u32) -> Option<PathBuf> {
     None
 }
 
-// apply and revert
-// called from main
-pub fn run_plan(plan: &Plan) -> Result<()> {
-    if !plan.injectors.memory_config.enabled {
-        debug!("memory injector not enabled; skipping");
-        return Ok(());
+impl crate::injector::ChaosInjector for MemoryInjector {
+    fn name(&self) -> &'static str {
+        "memory"
     }
-    validate_memory_config(plan)?;
 
-    let mut cg = MemoryConfig::default();
-    cg.apply(plan)?;
+    fn apply(&mut self, plan: &Plan) -> Result<()> {
+        MemoryInjector::apply(self, plan)
+    }
 
-    std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
-
-    cg.revert()?;
-    Ok(())
+    fn revert(&mut self) -> Result<()> {
+        MemoryInjector::revert(self)
+    }
 }
 
 #[cfg(test)]
@@ -539,7 +519,7 @@ mod tests {
         fs::create_dir_all(&cgroup).unwrap();
         fs::write(cgroup.join("cgroup.type"), "domain\n").unwrap();
 
-        MemoryConfig::assert_domain_cgroup(&cgroup).unwrap();
+        MemoryInjector::assert_domain_cgroup(&cgroup).unwrap();
     }
 
     #[test]
@@ -549,7 +529,7 @@ mod tests {
         fs::create_dir_all(&cgroup).unwrap();
         fs::write(cgroup.join("cgroup.type"), "threaded\n").unwrap();
 
-        let err = MemoryConfig::assert_domain_cgroup(&cgroup).unwrap_err().to_string();
+        let err = MemoryInjector::assert_domain_cgroup(&cgroup).unwrap_err().to_string();
         assert!(err.contains("threaded"));
         assert!(err.contains("cannot move PID"));
     }

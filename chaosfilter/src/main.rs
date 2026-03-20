@@ -1,11 +1,15 @@
 use anyhow::Context;
 
 use chaosfilter::plans::{Plan, RunConfigArgs};
-use chaosfilter::injector::cpu_memory::{validate_memory_config, MemoryConfig};
-use chaosfilter::injector::network::{validate_iface_exists, NetworkConfig};
+use chaosfilter::injector::cpu_memory::validate_memory_config;
+use chaosfilter::injector::network::validate_iface_exists;
+use chaosfilter::injector::{block_delay, cpu_memory, network, ChaosInjector};
 use chaosfilter::injector::filesystem::{validate_fd_config, FilesystemInjector};
 
 use clap::{Parser, Subcommand};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use std::{fs, path::{Path, PathBuf}};
 use toml_edit::{value, DocumentMut};
 use tracing::{debug, info};
@@ -133,137 +137,54 @@ where
     }
 }
 
-enum ActiveInjector {
-    // Stores the memory injector when it is enabled
-    Memory(MemoryConfig),
+fn wait_duration_or_ctrl_c(duration_s: u64) -> anyhow::Result<()> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    ctrlc::set_handler(move || {
+        flag.store(true, Ordering::SeqCst);
+    })?;
 
-    // Stores the network injector when it is enabled
-    Network(NetworkConfig),
-
-    // Stores the filesystem injector when it is enabled
-    Filesystem(FilesystemInjector),
-}
-
-impl ActiveInjector {
-    fn name(&self) -> &'static str {
-        // Gives each injector a readable name for logging
-        match self {
-            ActiveInjector::Memory(_) => "memory",
-            ActiveInjector::Network(_) => "network",
-            ActiveInjector::Filesystem(_) => "filesystem",
+    let deadline = Instant::now() + Duration::from_secs(duration_s);
+    while Instant::now() < deadline {
+        if stop.load(Ordering::SeqCst) {
+            info!("interrupt received; ending hold early");
+            break;
         }
+        std::thread::sleep(Duration::from_millis(100));
     }
-
-    fn apply(&mut self, plan: &Plan) -> anyhow::Result<()> {
-        // Calls the correct apply function depending on which injector this is
-        match self {
-            ActiveInjector::Memory(injector) => injector.apply(plan),
-
-            ActiveInjector::Network(injector) => {
-                // Network apply needs the interface from the plan
-                let iface = plan
-                    .targets
-                    .iface
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("targets.iface required for network injector"))?;
-
-                injector.apply(plan, iface)
-            }
-
-            ActiveInjector::Filesystem(injector) => injector.apply(plan),
-        }
-    }
-
-    fn revert(&mut self) -> anyhow::Result<()> {
-        // Calls the correct cleanup function depending on which injector this is
-        match self {
-            ActiveInjector::Memory(injector) => injector.revert(),
-            ActiveInjector::Network(injector) => injector.revert(),
-            ActiveInjector::Filesystem(injector) => injector.revert(),
-        }
-    }
+    Ok(())
 }
 
 pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
-    use std::sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    };
-    use std::time::{Duration, Instant};
+    let mut injectors: Vec<Box<dyn ChaosInjector>> = Vec::new();
 
-    // This vector holds every injector that is enabled in the config
-    let mut injectors: Vec<ActiveInjector> = Vec::new();
-
-    // If memory is enabled, create it and add it to the vector
     if plan.injectors.memory_config.enabled {
-        injectors.push(ActiveInjector::Memory(MemoryConfig::default()));
+        injectors.push(Box::new(cpu_memory::MemoryInjector::default()));
     }
-
-    // If network is enabled, create it and add it to the vector
     if plan.injectors.network_config.enabled {
-        injectors.push(ActiveInjector::Network(NetworkConfig::default()));
+        injectors.push(Box::new(network::NetworkInjector::default()));
     }
-
-    // If filesystem is enabled, create it and add it to the vector
+    if plan.injectors.block_config.enabled {
+        injectors.push(Box::new(block_delay::BlockDelayInjector::default()));
+    }
     if plan.injectors.filesystem_config.enabled {
-        injectors.push(ActiveInjector::Filesystem(FilesystemInjector::default()));
+        injectors.push(Box::new(FilesystemInjector::default()));
     }
 
-    // Go through every injector and apply it
-    for injector in injectors.iter_mut() {
-        println!("starting {}", injector.name());
-        injector.apply(plan)?;
+    for inj in injectors.iter_mut() {
+        inj.apply(plan)
+            .with_context(|| format!("apply failed ({})", inj.name()))?;
     }
 
-    // Shared flag used to stop early if Ctrl-C is pressed
-    let stop = Arc::new(AtomicBool::new(false));
-    let stop_for_handler = Arc::clone(&stop);
+    wait_duration_or_ctrl_c(plan.schedule.duration_s)?;
 
-    // When Ctrl-C happens, set the stop flag instead of exiting immediately
-    ctrlc::set_handler(move || {
-        stop_for_handler.store(true, Ordering::SeqCst);
-    })?;
-
-    // Calculate when the run should end based on the configured duration
-    let deadline = Instant::now() + Duration::from_secs(plan.schedule.duration_s);
-
-    // Keep waiting until either:
-    // 1. the duration finishes, or
-    // 2. Ctrl-C is pressed
-    while Instant::now() < deadline {
-        if stop.load(Ordering::SeqCst) {
-            break;
-        }
-
-        // Small sleep so the loop does not constantly burn CPU
-        std::thread::sleep(Duration::from_millis(200));
-    }
-
-    // Revert injectors in reverse order
-    // This is safer because the last one applied is removed first
-    for injector in injectors.iter_mut().rev() {
-        println!("removing {}", injector.name());
-        injector.revert()?;
+    for inj in injectors.iter_mut() {
+        inj.revert()
+            .with_context(|| format!("revert failed ({})", inj.name()))?;
     }
 
     Ok(())
 }
-
-
-/*pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
-    // Each module should early-return Ok(()) when its injector is disabled.
-    cpu_memory::run_plan(plan)?;
-    network::run_plan(plan)?;
-    block_delay::run(plan)?;
-
-    let mut filesystem_injector = FilesystemInjector::default();
-    filesystem_injector.apply(plan)?;
-
-    std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
-
-    filesystem_injector.revert()?;
-    Ok(())
-}*/
 
 pub fn output_config(
                     path: &Path,
