@@ -83,6 +83,7 @@ impl ChaosInjector for BlockDelayInjector {
         "block_delay"
     }
 
+    // Apply: configures cgroup `io.max` throttling (and runs the initial control test).
     fn apply(&mut self, plan: &Plan) -> Result<()> {
         let cfg = &plan.injectors.block_config;
 
@@ -211,6 +212,7 @@ impl ChaosInjector for BlockDelayInjector {
         Ok(())
     }
 
+    // Revert: runs the experimental test, restores the original `io.max`, and prints results.
     fn revert(&mut self) -> Result<()> {
         if !self.applied {
             return Ok(());

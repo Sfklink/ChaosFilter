@@ -138,6 +138,7 @@ where
 }
 
 fn wait_duration_or_ctrl_c(duration_s: u64) -> anyhow::Result<()> {
+    // `ctrlc` handler flips this flag; the main loop polls it and exits the hold early.
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
     ctrlc::set_handler(move || {
@@ -147,6 +148,7 @@ fn wait_duration_or_ctrl_c(duration_s: u64) -> anyhow::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(duration_s);
     while Instant::now() < deadline {
         if stop.load(Ordering::SeqCst) {
+            // Hold ends early; cleanup will still run in `run_plan`.
             info!("interrupt received; ending hold early");
             break;
         }
@@ -156,6 +158,7 @@ fn wait_duration_or_ctrl_c(duration_s: u64) -> anyhow::Result<()> {
 }
 
 pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
+    // Collect all enabled injectors first so apply/revert are consistent and ordered.
     let mut injectors: Vec<Box<dyn ChaosInjector>> = Vec::new();
 
     if plan.injectors.memory_config.enabled {
@@ -172,13 +175,16 @@ pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
     }
 
     for inj in injectors.iter_mut() {
+        // Apply every enabled injector before starting the hold window.
         inj.apply(plan)
             .with_context(|| format!("apply failed ({})", inj.name()))?;
     }
 
+    // Hold chaos until `duration_s` elapses, or Ctrl-C is pressed.
     wait_duration_or_ctrl_c(plan.schedule.duration_s)?;
 
     for inj in injectors.iter_mut() {
+        // Revert all injectors after the hold window.
         inj.revert()
             .with_context(|| format!("revert failed ({})", inj.name()))?;
     }
