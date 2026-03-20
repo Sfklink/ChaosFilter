@@ -57,9 +57,10 @@ pub fn validate_fd_config(plan: &Plan) -> Result<()> {
         .injectors
         .filesystem_config
         .target_pid
-        .ok_or_else(|| anyhow!("fd_config.enabled=true requires targets.cgroup"))?;
-
-    let cgroup = resolve_cgroup_path(cgroup_rel);
+        .unwrap()
+        .to_string();
+    
+    let cgroup = resolve_cgroup_path(&*cgroup_rel);
 
     if !cgroup.exists() {
         return Err(anyhow!(
@@ -93,7 +94,17 @@ impl FilesystemInjector {
 
         validate_fd_config(plan)?;
 
-        let cgroup = resolve_cgroup_path(plan.targets.cgroup.as_deref().unwrap());
+
+        // target cgroup required if enabled
+        let cg_rel = plan
+            .injectors
+            .filesystem_config
+            .target_pid
+            .unwrap()
+            .to_string();
+
+        
+        let cgroup = resolve_cgroup_path(&*cg_rel);
         let config = &plan.injectors.filesystem_config;
 
         let pids = read_cgroup_pids(&cgroup)
@@ -281,7 +292,7 @@ mod tests {
     use super::*;
     use crate::plans::{
         BlockConfig, FileSystemConfig, Injectors, MemoryConfig as CliMemCfg,
-        NetworkConfig as CliNetCfg, Plan, Schedule, Targets
+        NetworkConfig as CliNetCfg, Plan, Schedule
     };
     use std::fs;
     use tempfile::TempDir;
@@ -392,7 +403,7 @@ mod tests {
         plan.injectors.filesystem_config.enabled = true;
         plan.injectors.filesystem_config.soft_limit = 64;
         plan.injectors.filesystem_config.hard_limit = 64;
-        plan.targets.cgroup = Some("/nonexistent/cgroup/path".to_string());
+        plan.injectors.filesystem_config.target_pid = Some("/nonexistent/cgroup/path".to_string());
 
         let err = validate_fd_config(&plan).unwrap_err().to_string();
         assert!(err.contains("does not exist"));
@@ -406,7 +417,7 @@ mod tests {
         plan.injectors.filesystem_config.enabled = true;
         plan.injectors.filesystem_config.soft_limit = 200;
         plan.injectors.filesystem_config.hard_limit = 100;
-        plan.targets.cgroup = Some(dir.path().to_str().unwrap().to_string());
+        plan.injectors.filesystem_config.target_pid = Some(dir.path().to_str().unwrap().to_string());
 
         let err = validate_fd_config(&plan).unwrap_err().to_string();
         assert!(err.contains("soft_limit") && err.contains("hard_limit"));
@@ -420,7 +431,7 @@ mod tests {
         plan.injectors.filesystem_config.enabled = true;
         plan.injectors.filesystem_config.soft_limit = 64;
         plan.injectors.filesystem_config.hard_limit = 64;
-        plan.targets.cgroup = Some(dir.path().to_str().unwrap().to_string());
+        plan.injectors.filesystem_config.target_pid = Some(dir.path().to_str());
 
         validate_fd_config(&plan).unwrap();
     }

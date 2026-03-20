@@ -173,7 +173,7 @@ pub struct FileSystemConfig {
     #[serde(default)]
     pub enabled: bool,
 
-    /// PID to move / apply rlimits to
+    /// PID to move / apply limits to.
     pub target_pid: Option<u32>,
 
     /// New soft limit for RLIMIT_NOFILE applied to each PID in the cgroup. (e.g., 32, 64)

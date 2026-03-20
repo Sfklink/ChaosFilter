@@ -90,7 +90,7 @@ where
         Commands::Validate(args) => {
             let plan = Plan::load_from_toml_file(&args.config)?;
             validate_memory_config(&plan)?;
-            validate_iface_exists(plan.targets.iface.as_deref())?;
+            validate_iface_exists(plan.injectors.network_config.target_iface.as_deref())?;
             validate_fd_config(&plan)?;
 
             println!("\nConfig OK.");
@@ -349,8 +349,8 @@ mod test {
         let plan = Plan::load_from_toml_file(file.path()).unwrap();
 
         assert_eq!(plan.name, "test-config");
-        assert_eq!(plan.targets.cgroup.as_deref(), Some("test-cgroup"));
-        assert_eq!(plan.targets.iface.as_deref(), Some("enp5s0"));
+        assert_eq!(plan.injectors.memory_config.target_pid, Some("test-cgroup"));
+        assert_eq!(plan.injectors.network_config.target_iface.as_deref(), Some("enp5s0"));
         assert_eq!(plan.schedule.duration_s, 1);
 
         // Verify defaults
