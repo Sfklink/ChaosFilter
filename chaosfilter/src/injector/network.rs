@@ -7,6 +7,7 @@ use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::process::{Command, Stdio};
 use crate::injector::ebpf::{attach_classifier, EbpfHandle};
+use crate::injector::ChaosInjector;
 use tracing::{debug, error, info, warn};
 
 /// tc netem injector state.
@@ -412,6 +413,35 @@ impl NetworkConfig {
                 error!(error = %e, "failed to execute tc");
             }
         }
+    }
+}
+
+// ChaosInjector lifecycle:
+// - `apply()` resolves/validates interface and sets up tc + optional eBPF filters.
+// - `revert()` restores the known-good baseline qdisc and clears internal state.
+impl ChaosInjector for NetworkConfig {
+    fn name(&self) -> &'static str {
+        "network"
+    }
+
+    fn apply(&mut self, plan: &Plan) -> Result<()> {
+        let mut iface = plan
+            .targets
+            .iface
+            .as_deref()
+            .ok_or_else(|| anyhow!("targets.iface required for network injector"))?
+            .to_string();
+
+        if iface == "default" {
+            iface = get_default_iface()
+                .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?;
+        }
+
+        NetworkConfig::apply(self, plan, &iface)
+    }
+
+    fn revert(&mut self) -> Result<()> {
+        NetworkConfig::revert(self)
     }
 }
 

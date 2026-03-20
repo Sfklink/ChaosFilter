@@ -11,6 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use tracing::{debug, info, warn};
+use crate::injector::ChaosInjector;
 
 #[derive(Default)]
 pub struct MemoryConfig {
@@ -202,10 +203,12 @@ impl MemoryConfig {
             "post-apply cgroup state"
         );
 
-        let dur = plan.schedule.duration_s;
-        info!(duration_s = dur, "holding chaos");
-        std::thread::sleep(std::time::Duration::from_secs(dur));
-        info!("duration elapsed; reverting");
+        // Holding duration is controlled by the caller (e.g., `main.rs`),
+        // so `apply` should not block here.
+        info!(
+            duration_s = plan.schedule.duration_s,
+            "memory chaos applied; waiting for stop"
+        );
 
         Ok(())
     }
@@ -254,6 +257,23 @@ impl MemoryConfig {
 
         self.applied = false;
         Ok(())
+    }
+}
+
+// ChaosInjector lifecycle:
+// - `apply()` applies cgroup knobs and captures revert state inside `MemoryConfig`.
+// - `revert()` restores the previously captured knob values.
+impl ChaosInjector for MemoryConfig {
+    fn name(&self) -> &'static str {
+        "memory"
+    }
+
+    fn apply(&mut self, plan: &Plan) -> Result<()> {
+        MemoryConfig::apply(self, plan)
+    }
+
+    fn revert(&mut self) -> Result<()> {
+        MemoryConfig::revert(self)
     }
 }
 

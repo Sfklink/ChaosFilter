@@ -135,17 +135,65 @@ where
 }
 
 pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
-    // Each module should early-return Ok(()) when its injector is disabled.
-    cpu_memory::run_plan(plan)?;
-    network::run_plan(plan)?;
-    block_delay::run(plan)?;
+    // Build the list of injectors we might run for this plan.
+    // We instantiate them first so we can:
+    //   1) apply all enabled injectors
+    //   2) keep them active while we wait
+    //   3) revert/remove them in a second pass
+    // 1) Instantiate injectors into a vector
+    let mut injectors: Vec<Box<dyn chaosfilter::injector::ChaosInjector>> = Vec::new();
 
-    let mut filesystem_injector = FilesystemInjector::default();
-    filesystem_injector.apply(plan)?;
+    // Push injectors based on enabled config blocks.
+    if plan.injectors.memory_config.enabled {
+        injectors.push(Box::new(cpu_memory::MemoryConfig::default()));
+    }
 
-    std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
+    if plan.injectors.network_config.enabled {
+        // Network injector resolves the interface during `apply()` (including "default" indirection).
+        injectors.push(Box::new(network::NetworkConfig::default()));
+    }
 
-    filesystem_injector.revert()?;
+    if plan.injectors.block_config.enabled {
+        injectors.push(Box::new(block_delay::BlockDelayInjector::default()));
+    }
+
+    if plan.injectors.filesystem_config.enabled {
+        injectors.push(Box::new(FilesystemInjector::default()));
+    }
+
+    // 2) Apply each injector and keep the active instances for later revert.
+    let mut active_injectors: Vec<Box<dyn chaosfilter::injector::ChaosInjector>> = Vec::new();
+    for injector in injectors {
+        info!("starting injector: {}", injector.name());
+        injector.apply(plan)?;
+        active_injectors.push(injector);
+    }
+
+    // 3) Wait for the stop condition:
+    //   - Ctrl-C triggers revert immediately
+    //   - otherwise we revert after the configured schedule duration
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+    ctrlc::set_handler(move || {
+        let _ = stop_tx.send(());
+    })?;
+
+    // Use the plan duration as the "hard-coded sleep" equivalent for now.
+    let hold = std::time::Duration::from_secs(plan.schedule.duration_s);
+    match stop_rx.recv_timeout(hold) {
+        Ok(()) => info!("Ctrl-C received; removing injectors"),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            info!("duration elapsed; removing injectors")
+        }
+        Err(e) => return Err(anyhow::anyhow!("failed while waiting for stop signal: {e}")),
+    }
+
+    // 4) Revert injectors in a second pass.
+    // Use `iter_mut()` because revert mutates internal snapshot state.
+    for injector in active_injectors.iter_mut() {
+        info!("removing injector: {}", injector.name());
+        injector.revert()?;
+    }
+
     Ok(())
 }
 

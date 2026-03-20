@@ -21,6 +21,7 @@ use anyhow::{anyhow, Result, Context};
 use libc::{self, rlimit64, RLIMIT_NOFILE};
 use std::{fs, path::{Path, PathBuf}};
 use tracing::{info, warn, debug};
+use crate::injector::ChaosInjector;
 
 /// Snapshot of each RLIMIT_NOFILE per process
 struct SavedLimitConfig {
@@ -177,6 +178,23 @@ impl FilesystemInjector {
         self.applied = false;
         self.saved.clear();
         Ok(())
+    }
+}
+
+// ChaosInjector lifecycle:
+// - `apply()` lowers RLIMIT_NOFILE for every PID in the target cgroup and snapshots old limits.
+// - `revert()` restores the saved limits.
+impl ChaosInjector for FilesystemInjector {
+    fn name(&self) -> &'static str {
+        "filesystem"
+    }
+
+    fn apply(&mut self, plan: &Plan) -> Result<()> {
+        FilesystemInjector::apply(self, plan)
+    }
+
+    fn revert(&mut self) -> Result<()> {
+        FilesystemInjector::revert(self)
     }
 }
 
