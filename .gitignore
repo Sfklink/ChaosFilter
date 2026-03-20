@@ -32,7 +32,3 @@ cf-config.toml
 Cargo.lock
 cf-config.toml
 Cargo.lock
-
-
-# demo results so the demo can show them at the end
-demo_*.txt

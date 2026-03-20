@@ -27,9 +27,39 @@ pause() {
     read -r -p "Press Enter to continue..." _
 }
 
+# Apply a work load to the CPU
+echo "Starting Workload Process:"
+taskset -c 0 yes > /dev/null &
+CPU_PID=$!
+pause
+
+# Apply a workload to memory
+python3 <<'PY' &
+import os
+import time
+
+chunks = []
+
+print(f"[workload] PID={os.getpid()} growing memory safely", flush=True)
+
+while True:
+    if len(chunks) < 60:
+        chunks.append(bytearray(10 * 1024 * 1024))
+        time.sleep(0.5)
+    else:
+        time.sleep(1)
+PY
+MEM_PID=$!
+
+
+echo "CPU PID: $CPU_PID"
+echo "Memory PID: $MEM_PID"
+# echo "Target PID: $WORKLOAD_PID"
+pause
+
 # need_cmd 
 #   Helper function that checks to make sure all required programs are installed and prints an error if one is missing 
-#   Checks for: cargo, iperf3, and sed/grep 
+#   Checks for: cargo, iperf3, and python3 
 need_cmd() {
     command -v "$1" >/dev/null 2>&1 || {
         echo "Missing required command: $1"
@@ -38,6 +68,7 @@ need_cmd() {
 }
 need_cmd cargo
 need_cmd iperf3
+need_cmd python3
 
 # Path to the compiled Chaosfilter binary
 CHAOS_BIN="$(command -v chaosfilter || true)"
@@ -45,14 +76,20 @@ CHAOS_BIN="$(command -v chaosfilter || true)"
 # Initalize IPERF_PID for use later 
 IPERF_PID=""
 
+# Initalize both TARGET and CHAOS_PID for use later 
+CHAOS_PID=""
+TARGET_PID=""
+
 echo "---------------------------------------"
 echo "ChaosFilter Interactive Demo"
 echo "Network Stack"
 echo "---------------------------------------"
-
+echo
+echo "Initalizing sudo if needed"
+sudo -v
 pause
 
-# Step 0 - Installing ChaosFilter 
+# Installing ChaosFilter 
 #   Runs 'cargo install --path' to get the path to the binary with force to rebuild if it already exists
 echo "Step 0 - Installing ChaosFilter:"
 echo "cargo install --path chaosfilter --force"
@@ -64,18 +101,19 @@ pause
 cleanup() {
     echo
     echo "Cleanup:"
+    [[ -n "${CPU_PID:-}" ]] && kill "$CPU_PID" 2>/dev/null || true
+    [[ -n "${MEM_PID:-}" ]] && kill "$MEM_PID" 2>/dev/null || true
     [[ -n "${IPERF_PID:-}" ]] && kill "$IPERF_PID" 2>/dev/null || true
+    [[ -n "${CHAOS_PID:-}" ]] && kill "$CHAOS_PID" 2>/dev/null || true
     pkill -f "iperf3 -s" 2>/dev/null || true
 }
 trap cleanup EXIT
 
 
 # Config file updates 
-
-# Network Configuration
-#   Enables tc netem delay and packet loss and uses iperf to measure it all
-set_network_config() {
-
+#   Enables all the sections execpt for block chaos and initializes all the variables for the chaos
+set_config() {
+    TARGET_PID=$1
 cat <<EOF > "demo_config.toml"
 # This config is based on the one made by the init command and is for the demo.
 # No comments or anything just arguments
@@ -84,7 +122,7 @@ name = "example-plan"
 
 [targets]
 iface = "default"
-cgroup = "0"
+cgroup = "chaosfilter"
 
 [schedule]
 duration_s = 10
@@ -96,26 +134,58 @@ delay_ms = 400
 loss_percent = 50.0
 
 [injectors.memory_config]
-enabled = false
-target_pid = 0
+enabled = true
+target_pid = $TARGET_PID
 move_pid = true
 enable = ["cpu", "memory"]
-cpu_max = "max 100000"
-cpu_weight = 100
-mem_max = "max"
-mem_high = "max"
-swap_max = "max"
+cpu_max = "20000 100000"
+cpu_weight = 200
+mem_max = "500M"
+mem_high = "400M"
+swap_max = "0"
 
-[injectors.block_config]
-enabled = false
-device = "/dev/sda"
-rbps = 10485760
-wbps = 10485760
 EOF
 
-echo "demo_config.toml updated for network stack demo"
+echo "demo_config.toml updated for full demo"
 }
 
+# Gets the tick rate for the cpu
+get_cpu_ticks() {
+    awk '{print $14 + $15}' /proc/$TARGET_PID/stat
+}
+
+# Watches the CPU in real time while chaos is active
+monitor_cpu() {
+    CLK_TCK=$(getconf CLK_TCK)
+    PREV=$(get_cpu_ticks)
+    sleep 1
+
+    while kill -0 "$CHAOS_PID" 2>/dev/null; do
+        CURR=$(get_cpu_ticks)
+        DELTA=$((CURR - PREV))
+        PREV=$CURR
+
+        CPU=$((DELTA * 100 / CLK_TCK))
+
+        printf "CPU: %3d%%\n" "$CPU"
+        sleep 1
+    done
+}
+
+# Gets the memory in KB
+get_mem_kb() {
+    grep VmRSS /proc/$MEM_PID/status | awk '{print $2}'
+}
+
+# Watches the memory in real time while chaos is active
+monitor_mem() {
+    while kill -0 "$CHAOS_PID" 2>/dev/null; do
+        MEM=$(get_mem_kb)
+        MEM_MB=$((MEM / 1024))
+        printf "Memory: %4d MB\n" "$MEM_MB"    
+        sleep 1
+    done
+}
 
 # DEMOS
 
@@ -125,8 +195,8 @@ echo "Network Stack Chaos Demo:"
 echo "-------------------------------"
 pause
 
-# Build the config for network chaos
-set_network_config
+# Build the config for chaos
+set_config "$CPU_PID"
 
 # Removes any potentially existing iperf servers
 echo "Checking for and removing existing iperf servers..."
@@ -148,19 +218,88 @@ kill -STOP "$IPERF_PID"
 pause
 
 # Run the chaosfilter
-echo "Applying ChaosFilter..."
+echo "Applying ChaosFilter (NETWORK)..."
 echo "sudo -E $CHAOS_BIN chaos --config demo_config.toml"
 kill -CONT "$IPERF_PID"
-sudo -E "$CHAOS_BIN" chaos --config demo_config.toml > demo_network_results.txt 2>&1 &
+sudo -E "$CHAOS_BIN" chaos --config demo_config.toml &
 CHAOS_PID=$!
 wait "$CHAOS_PID"
+CHAOS_PID=""
 
 # Stops the network load and iperf
 kill "$IPERF_PID" 2>/dev/null || true
 wait "$IPERF_PID" 2>/dev/null || true
+IPERF_PID=""
 echo
-cat demo_network_results.txt
+echo "Network Chaos Done"
 echo
+pause
+
+# CPU chaos section
+echo "----------------------------------"
+echo "CPU Chaos Demo"
+echo "----------------------------------"
+pause
+
+# Config setup
+set_config "$CPU_PID"
+
+# Baseline CPU value
+echo "CPU Baseline"
+(
+    PREV=$(get_cpu_ticks)
+    CLK_TCK=$(getconf CLK_TCK)
+    sleep 1
+    for _ in {1..10}; do
+        CURR=$(get_cpu_ticks)
+        DELTA=$((CURR - PREV))
+        PREV=$CURR
+        CPU=$((DELTA * 100 / CLK_TCK))
+        printf "CPU: %3d%%\n" "$CPU"
+        sleep 1
+    done
+)
+pause
+
+# Runs ChaosFilter and the real-time results
+echo "Applying ChaosFilter (CPU)..."
+sudo -E "$CHAOS_BIN" chaos --config demo_config.toml &
+CHAOS_PID=$!
+monitor_cpu
+wait "$CHAOS_PID"
+CHAOS_PID=""
+echo
+echo "CPU Chaos Done"
+pause
+
+# Memory chaos section
+echo "----------------------------------"
+echo "Memory Chaos Demo"
+echo "----------------------------------"
+pause
+
+# Build the config for chaos
+set_config "$MEM_PID"
+
+
+# Baseline Memmory value
+echo "Memory Baseline"
+for _ in {1..10}; do
+    MEM=$(get_mem_kb)
+    printf "Memory: %4d MB\n" $((MEM / 1024))
+    sleep 1
+done
+pause
+
+# Runs ChaosFilter and shows real-time results
+echo "Applying ChaosFilter (MEMORY)..."
+sudo -E "$CHAOS_BIN" chaos --config demo_config.toml &
+CHAOS_PID=$!
+monitor_mem
+wait "$CHAOS_PID"
+CHAOS_PID=""
+echo
+echo "Memory Chaos Done"
 pause
 
 echo "----------------------------------"
