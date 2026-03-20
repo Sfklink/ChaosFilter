@@ -456,8 +456,9 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
     // and except them to cooperate between functions
 
     let mut iface = plan
-        .targets
-        .iface
+        .injectors
+        .network_config
+        .target_iface
         .as_deref()
         .ok_or_else(|| anyhow!("targets.iface required for ping report"))?
         .to_string();

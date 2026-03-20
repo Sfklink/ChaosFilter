@@ -56,10 +56,11 @@ pub fn validate_memory_config(plan: &Plan) -> Result<()> {
 
     // target cgroup required if enabled
     let cg_rel = plan
-        .targets
-        .cgroup
-        .as_deref()
-        .ok_or_else(|| anyhow!("memory_config.enabled=true requires targets.cgroup"))?;
+        .injectors
+        .memory_config
+        .target_pid
+        .unwrap()
+        .to_string();
 
     let cg = resolve_cgroup_path(cg_rel);
 
@@ -100,7 +101,8 @@ impl MemoryConfig {
         validate_memory_config(plan)?;
 
         let pid = plan.injectors.memory_config.target_pid.unwrap();
-        let cg_rel = plan.targets.cgroup.as_deref().unwrap();
+        let cg_rel = plan.injectors.memory_config.target_pid.unwrap().to_string();
+
         let cg = resolve_cgroup_path(cg_rel);
 
         info!(
@@ -259,7 +261,7 @@ impl MemoryConfig {
 
 /* ------------------------- helpers ------------------------- */
 
-fn resolve_cgroup_path(arg: &str) -> PathBuf {
+fn resolve_cgroup_path(arg: String) -> PathBuf {
     let p = PathBuf::from(arg);
     if p.is_absolute() {
         p
@@ -376,15 +378,11 @@ pub fn run_plan(plan: &Plan) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    use crate::plans::{Injectors, MemoryConfig as MemCfg, NetworkConfig as NetCfg, Schedule, Targets};
+    use crate::plans::{Injectors, MemoryConfig as MemCfg, NetworkConfig as NetCfg, Schedule};
 
     fn base_plan() -> Plan {
         Plan {
             name: "test".to_string(),
-            targets: Targets {
-                cgroup: None,
-                iface: None,
-            },
             schedule: Schedule { duration_s: 0 },
             injectors: Injectors {
                 network_config: NetCfg::default(),
@@ -397,13 +395,13 @@ mod tests {
 
     #[test]
     fn resolve_cgroup_path_absolute() {
-        let cgroup_path = resolve_cgroup_path("/tmp/test");
+        let cgroup_path = resolve_cgroup_path("/tmp/test".parse().unwrap());
         assert_eq!(cgroup_path, PathBuf::from("/tmp/test"));
     }
 
     #[test]
     fn resolve_cgroup_path_relative() {
-        let p = resolve_cgroup_path("test");
+        let p = resolve_cgroup_path("test".parse().unwrap());
         assert_eq!(p, Path::new("/sys/fs/cgroup").join("test"));
     }
 
@@ -560,7 +558,7 @@ mod tests {
     fn validate_memory_config_errors_when_enabled_missing_pid() {
         let mut plan = base_plan();
         plan.injectors.memory_config.enabled = true;
-        plan.targets.cgroup = Some("testcg".to_string());
+        plan.injectors.memory_config.target_pid = Some("testcg".to_string().parse().unwrap());
 
         let err = validate_memory_config(&plan).unwrap_err().to_string();
         assert!(err.contains("requires injectors.memory_config.pid"));
@@ -571,7 +569,7 @@ mod tests {
         let mut plan = base_plan();
         plan.injectors.memory_config.enabled = true;
         plan.injectors.memory_config.target_pid = Some(4_000_000_000u32);
-        plan.targets.cgroup = Some("testcg".to_string());
+        plan.injectors.memory_config.target_pid = Some("testcg".to_string().parse().unwrap());
 
         let err = validate_memory_config(&plan).unwrap_err().to_string();
         assert!(err.contains("PID does not exist"));
@@ -593,7 +591,8 @@ mod tests {
         plan.injectors.memory_config.enabled = true;
         plan.injectors.memory_config.target_pid = Some(std::process::id());
 
-        plan.targets.cgroup = Some("does_not_exist/child".to_string());
+        //meow
+        plan.injectors.memory_config.target_pid = Some("does_not_exist/child".to_string().parse().unwrap());
 
         let err = validate_memory_config(&plan).unwrap_err().to_string();
         assert!(err.contains("parent cgroup directory does not exist"));

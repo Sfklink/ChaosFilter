@@ -54,9 +54,9 @@ pub fn validate_fd_config(plan: &Plan) -> Result<()> {
     }
 
     let cgroup_rel = plan
-        .targets
-        .cgroup
-        .as_deref()
+        .injectors
+        .filesystem_config
+        .target_pid
         .ok_or_else(|| anyhow!("fd_config.enabled=true requires targets.cgroup"))?;
 
     let cgroup = resolve_cgroup_path(cgroup_rel);
@@ -289,10 +289,6 @@ mod tests {
     fn base_plan() -> Plan {
         Plan {
             name: "test".to_string(),
-            targets: Targets {
-                cgroup: None,
-                iface: None,
-            },
             schedule: Schedule { duration_s: 0 },
             injectors: Injectors {
                 network_config: CliNetCfg::default(),
