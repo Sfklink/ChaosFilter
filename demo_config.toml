@@ -18,12 +18,12 @@ loss_percent = 50.0
 
 [injectors.memory_config]
 enabled = true
-target_pid = 16231
+target_pid = 37222
 move_pid = true
 enable = ["cpu", "memory"]
 cpu_max = "20000 100000"
 cpu_weight = 200
-mem_max = "500M"
-mem_high = "400M"
+mem_max = "400M"
+mem_high = "300M"
 swap_max = "0"
 

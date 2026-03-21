@@ -19,47 +19,9 @@ set -euo pipefail
 # Makes sure the binary can always be found
 export PATH="$HOME/.cargo/bin:$PATH"
 
-# pause
-#   Helper function that is used throughout the demo to hold script execution until user hits enter
-#   Also pauses and resumes the iperf print out if running so it looks good
-pause() {
-    echo
-    read -r -p "Press Enter to continue..." _
-}
-
-# Apply a work load to the CPU
-echo "Starting Workload Process:"
-taskset -c 0 yes > /dev/null &
-CPU_PID=$!
-pause
-
-# Apply a workload to memory
-python3 <<'PY' &
-import os
-import time
-
-chunks = []
-
-print(f"[workload] PID={os.getpid()} growing memory safely", flush=True)
-
-while True:
-    if len(chunks) < 60:
-        chunks.append(bytearray(10 * 1024 * 1024))
-        time.sleep(0.5)
-    else:
-        time.sleep(1)
-PY
-MEM_PID=$!
-
-
-echo "CPU PID: $CPU_PID"
-echo "Memory PID: $MEM_PID"
-# echo "Target PID: $WORKLOAD_PID"
-pause
-
 # need_cmd 
 #   Helper function that checks to make sure all required programs are installed and prints an error if one is missing 
-#   Checks for: cargo, iperf3, and python3 
+#   Checks for: cargo, iperf3, grep/sed, and python3 
 need_cmd() {
     command -v "$1" >/dev/null 2>&1 || {
         echo "Missing required command: $1"
@@ -69,6 +31,45 @@ need_cmd() {
 need_cmd cargo
 need_cmd iperf3
 need_cmd python3
+need_cmd grep
+need_cmd sed
+
+
+# pause
+#   Helper function that is used throughout the demo to hold script execution until user hits enter
+#   Also pauses and resumes the iperf print out if running so it looks good
+pause() {
+    echo
+    read -r -p "Press Enter to continue..." _
+}
+
+# Apply a work load to the CPU
+echo "Starting Workload Process..."
+yes > /dev/null &
+CPU_PID=$!
+pause
+
+# Apply a workload to memory
+mem_workload() {
+    python3 <<'PY' &
+import os
+import time
+
+chunks = []
+limit_chunks = 100   # ~100 * 10MB = ~1GB max
+
+print(f"[workload] PID={os.getpid()} growing memory...", flush=True)
+
+while True:
+    try:
+        chunks.append(bytearray(10 * 1024 * 1024))
+        time.sleep(0.3)
+    except MemoryError:
+        time.sleep(1)
+PY
+    MEM_PID=$!
+}
+
 
 # Path to the compiled Chaosfilter binary
 CHAOS_BIN="$(command -v chaosfilter || true)"
@@ -114,7 +115,7 @@ trap cleanup EXIT
 #   Enables all the sections execpt for block chaos and initializes all the variables for the chaos
 set_config() {
     TARGET_PID=$1
-cat <<EOF > "demo_config.toml"
+cat <<EOF > demo_config.toml
 # This config is based on the one made by the init command and is for the demo.
 # No comments or anything just arguments
 
@@ -140,8 +141,8 @@ move_pid = true
 enable = ["cpu", "memory"]
 cpu_max = "20000 100000"
 cpu_weight = 200
-mem_max = "500M"
-mem_high = "400M"
+mem_max = "400M"
+mem_high = "300M"
 swap_max = "0"
 
 EOF
@@ -149,9 +150,17 @@ EOF
 echo "demo_config.toml updated for full demo"
 }
 
+# get_config_value
+#   Reads from the config at a specific line that is passed when called so I can tell the user exactly 
+#   what is about to happen when the chaos runs
+get_config_value() {
+    local key="$1"
+    grep "^$key" demo_config.toml | cut -d '=' -f2 | sed 's/^ *//; s/"//g'
+}
+
 # Gets the tick rate for the cpu
 get_cpu_ticks() {
-    awk '{print $14 + $15}' /proc/$TARGET_PID/stat
+    awk '{print $14 + $15}' /proc/$CPU_PID/stat
 }
 
 # Watches the CPU in real time while chaos is active
@@ -174,7 +183,11 @@ monitor_cpu() {
 
 # Gets the memory in KB
 get_mem_kb() {
-    grep VmRSS /proc/$MEM_PID/status | awk '{print $2}'
+    if [[ -f /proc/$MEM_PID/status ]]; then
+        grep VmRSS /proc/$MEM_PID/status | awk '{print $2}'
+    else
+        echo 0
+    fi
 }
 
 # Watches the memory in real time while chaos is active
@@ -217,8 +230,14 @@ sleep 6
 kill -STOP "$IPERF_PID"
 pause
 
+# Get the chaos values
+DELAY=$(get_config_value "delay_ms")
+LOSS=$(get_config_value "loss_percent")
+
 # Run the chaosfilter
 echo "Applying ChaosFilter (NETWORK)..."
+echo "ChaosFilter will inject ${DELAY}ms of delay and ${LOSS}% packet loss"
+pause
 echo "sudo -E $CHAOS_BIN chaos --config demo_config.toml"
 kill -CONT "$IPERF_PID"
 sudo -E "$CHAOS_BIN" chaos --config demo_config.toml &
@@ -246,23 +265,29 @@ set_config "$CPU_PID"
 
 # Baseline CPU value
 echo "CPU Baseline"
-(
-    PREV=$(get_cpu_ticks)
-    CLK_TCK=$(getconf CLK_TCK)
+PREV=$(get_cpu_ticks)
+CLK_TCK=$(getconf CLK_TCK)
+sleep 1
+
+for _ in {1..10}; do
+    CURR=$(get_cpu_ticks)
+    DELTA=$((CURR - PREV))
+    PREV=$CURR
+    CPU=$((DELTA * 100 / CLK_TCK))
+    printf "CPU: %3d%%\n" "$CPU"
     sleep 1
-    for _ in {1..10}; do
-        CURR=$(get_cpu_ticks)
-        DELTA=$((CURR - PREV))
-        PREV=$CURR
-        CPU=$((DELTA * 100 / CLK_TCK))
-        printf "CPU: %3d%%\n" "$CPU"
-        sleep 1
-    done
-)
+done
 pause
+
+# Get the chaos values
+CPU_MAX=$(get_config_value "cpu_max")
+CPU_WEIGHT=$(get_config_value "cpu_weight")
 
 # Runs ChaosFilter and the real-time results
 echo "Applying ChaosFilter (CPU)..."
+echo "sudo -E "$CHAOS_BIN" chaos --config demo_config.toml"
+echo "ChaosFilter will restrict the process to a limited share of CPU time (quota: $CPU_MAX, priority weight: $CPU_WEIGHT)"
+pause
 sudo -E "$CHAOS_BIN" chaos --config demo_config.toml &
 CHAOS_PID=$!
 monitor_cpu
@@ -278,21 +303,21 @@ echo "Memory Chaos Demo"
 echo "----------------------------------"
 pause
 
-# Build the config for chaos
+# Memory workload and build the config for chaos
+echo "Starting workload and setting config"
+mem_workload
 set_config "$MEM_PID"
+echo
 
-
-# Baseline Memmory value
-echo "Memory Baseline"
-for _ in {1..10}; do
-    MEM=$(get_mem_kb)
-    printf "Memory: %4d MB\n" $((MEM / 1024))
-    sleep 1
-done
-pause
+# Get the chaos values
+MEM_MAX=$(get_config_value "mem_max")
+MEM_HIGH=$(get_config_value "mem_high")
 
 # Runs ChaosFilter and shows real-time results
 echo "Applying ChaosFilter (MEMORY)..."
+echo "sudo -E "$CHAOS_BIN" chaos --config demo_config.toml"
+echo "ChaosFilter will constrain the process's memory usage (soft limit: $MEM_HIGH, hard cap: $MEM_MAX)"
+pause
 sudo -E "$CHAOS_BIN" chaos --config demo_config.toml &
 CHAOS_PID=$!
 monitor_mem
