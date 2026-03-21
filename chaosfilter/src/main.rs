@@ -38,15 +38,17 @@ fn main() {
 ///
 /// # Behavior
 /// - For [`Commands::Validate`]:
-///     - Builds a plan via [`RunLikeArgs::plan_from_args`].
-///     - Validates the plan using [`chaosfilter_common::validate_plan`].
+///     - Loads a [`Plan`] from the config TOML ([`Plan::load_from_toml_file`]).
+///     - Runs injector-specific checks: memory cgroup/PID ([`validate_memory_config`]),
+///       network interface ([`validate_iface_exists`]), and fd limits ([`validate_fd_config`]).
 ///
 /// - For [`Commands::Chaos`]:
-///     - Builds a plan via [`RunLikeArgs::plan_from_args`].
-///     - Executes the plan via [`chaosfilter_controller::qdiscs::run_plan`].
+///     - Loads the plan from disk, then runs [`run_plan`], which applies every **enabled**
+///       [`ChaosInjector`] (memory, network, block I/O delay, filesystem), holds for
+///       [`Plan::schedule`] or until Ctrl-C, then reverts them in order.
 ///
-/// - For ['Commands::Init']
-///     - Outputs a .toml config file to eprintlnCWD.
+/// - For [`Commands::Init`]:
+///     - Writes a starter `.toml` config (defaults + optional `--pid` / `--iface`) to disk.
 ///
 /// # Side Effects
 /// - Prints status messages to standard output.
@@ -136,6 +138,10 @@ where
     }
 }
 
+/// Runs enabled chaos injectors end-to-end: apply → hold (duration or Ctrl-C) → revert.
+///
+/// All injectors implement [`ChaosInjector`]. Only those whose config flags are enabled in
+/// `plan.injectors` are applied; the same instances are reverted after the hold period.
 pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
     let injectors: Vec<Box<dyn ChaosInjector>> = vec![
         Box::new(cpu_memory::MemoryInjector::default()),
