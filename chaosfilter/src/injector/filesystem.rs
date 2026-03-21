@@ -59,7 +59,7 @@ pub fn validate_fd_config(plan: &Plan) -> Result<()> {
         .target_pid
         .unwrap()
         .to_string();
-    
+
     let cgroup = resolve_cgroup_path(&*cgroup_rel);
 
     if !cgroup.exists() {
@@ -103,7 +103,7 @@ impl FilesystemInjector {
             .unwrap()
             .to_string();
 
-        
+
         let cgroup = resolve_cgroup_path(&*cg_rel);
         let config = &plan.injectors.filesystem_config;
 
@@ -403,7 +403,6 @@ mod tests {
         plan.injectors.filesystem_config.enabled = true;
         plan.injectors.filesystem_config.soft_limit = 64;
         plan.injectors.filesystem_config.hard_limit = 64;
-        plan.injectors.filesystem_config.target_pid = Some("/nonexistent/cgroup/path".to_string());
 
         let err = validate_fd_config(&plan).unwrap_err().to_string();
         assert!(err.contains("does not exist"));
@@ -417,7 +416,6 @@ mod tests {
         plan.injectors.filesystem_config.enabled = true;
         plan.injectors.filesystem_config.soft_limit = 200;
         plan.injectors.filesystem_config.hard_limit = 100;
-        plan.injectors.filesystem_config.target_pid = Some(dir.path().to_str().unwrap().to_string());
 
         let err = validate_fd_config(&plan).unwrap_err().to_string();
         assert!(err.contains("soft_limit") && err.contains("hard_limit"));
@@ -431,7 +429,6 @@ mod tests {
         plan.injectors.filesystem_config.enabled = true;
         plan.injectors.filesystem_config.soft_limit = 64;
         plan.injectors.filesystem_config.hard_limit = 64;
-        plan.injectors.filesystem_config.target_pid = Some(dir.path().to_str());
 
         validate_fd_config(&plan).unwrap();
     }

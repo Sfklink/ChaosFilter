@@ -187,11 +187,7 @@ pub fn output_config(
         doc["injectors"]["network_config"]["target_iface"] = value(iface);
         info!(iface, "network injector enabled");
         // set iface
-        if doc["targets"]["iface"].is_none() {
-            doc["targets"]["iface"] = value(iface);
-        } else {
-            doc["targets"]["iface"] = value(iface);
-        }
+
     }else{
         doc["injectors"]["network_config"]["enabled"] = value(false);
         doc["injectors"]["network_config"]["target_iface"] = value("default");
@@ -333,9 +329,11 @@ mod test {
         let toml = r#"
             name = "test-config"
 
-            [targets]
-            iface = "enp5s0"
-            cgroup = "test-cgroup"
+           [injectors]
+            
+           [injectors.memory_config]
+           target_pid = 123
+           target_iface = "enp5s0"
 
             [schedule]
             duration_s = 1
@@ -348,8 +346,13 @@ mod test {
 
         let plan = Plan::load_from_toml_file(file.path()).unwrap();
 
+
+        /*
+        TODO: This test is broken because the test-config toml is just stringified
+
+         */
         assert_eq!(plan.name, "test-config");
-        assert_eq!(plan.injectors.memory_config.target_pid, Some("test-cgroup"));
+        assert_eq!(plan.injectors.memory_config.target_pid, Some(123));
         assert_eq!(plan.injectors.network_config.target_iface.as_deref(), Some("enp5s0"));
         assert_eq!(plan.schedule.duration_s, 1);
 
@@ -373,9 +376,12 @@ mod test {
 
             [injectors.network_config]
             enabled = true
+            target_iface = "enp5s0"
 
             [injectors.memory_config]
             enabled = true
+            target_pid = 123
+
             "#;
 
         let mut file = NamedTempFile::new().unwrap();
@@ -384,8 +390,8 @@ mod test {
         let plan = Plan::load_from_toml_file(file.path()).unwrap();
 
         assert_eq!(plan.name, "test-config");
-        assert_eq!(plan.targets.cgroup.as_deref(), Some("test-cgroup"));
-        assert_eq!(plan.targets.iface.as_deref(), Some("enp5s0"));
+        assert_eq!(plan.injectors.network_config.target_iface.as_deref(), Some("enp5s0"));
+        assert_eq!(plan.injectors.memory_config.target_pid, Some(123));
         assert_eq!(plan.schedule.duration_s, 1);
         assert_eq!(plan.injectors.network_config.enabled, true);
         assert_eq!(plan.injectors.memory_config.enabled, true);
