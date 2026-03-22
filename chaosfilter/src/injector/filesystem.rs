@@ -180,20 +180,18 @@ impl FilesystemInjector {
     }
 }
 
-/// Called from `main::run_plan`. Validates, applies chaos, holds, reverts, the whole shaboo
-/// shabang.
-pub fn run_plan(plan: &Plan) -> Result<()> {
-    if !plan.injectors.filesystem_config.enabled {
-        return Ok(());
+impl crate::injector::ChaosInjector for FilesystemInjector {
+    fn name(&self) -> &'static str {
+        "filesystem"
     }
 
-    validate_fd_config(plan)?;
+    fn apply(&mut self, plan: Plan) -> Result<()> {
+        FilesystemInjector::apply(self, &plan)
+    }
 
-    let mut injector = FilesystemInjector::default();
-    injector.apply(plan)?;
-    injector.revert()?;
-
-    Ok(())
+    fn revert(&mut self) -> Result<()> {
+        FilesystemInjector::revert(self)
+    }
 }
 
 // Helper methods

@@ -71,13 +71,13 @@ impl Plan {
                 .map(|w| w[1].to_string())
         }
 
-        if let Some(iface) = plan.targets.iface.as_deref() {
-            if iface == "default" {
-                plan.targets.iface = Some(
-                    get_default_iface()
-                        .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?
-                );
-            }
+        if let Some(iface) = plan.targets.iface.as_deref()
+            && iface == "default"
+        {
+            plan.targets.iface = Some(
+                get_default_iface()
+                    .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?
+            );
         }
 
         Ok(plan)
