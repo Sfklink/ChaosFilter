@@ -13,7 +13,7 @@ use std::{
 use tracing::{debug, info, warn};
 
 #[derive(Default)]
-pub struct MemoryInjector {
+pub struct MemoryConfig {
     applied: bool,
 
     // what we operated on
@@ -28,6 +28,8 @@ pub struct MemoryInjector {
     prev_mem_high: Option<String>,
     prev_swap_max: Option<String>,
 }
+
+pub type MemoryInjector = MemoryConfig;
 
 /*
 TODO:
@@ -78,7 +80,7 @@ pub fn validate_memory_config(plan: &Plan) -> Result<()> {
     Ok(())
 }
 
-impl MemoryInjector {
+impl MemoryConfig {
     //ugly debuggers dont even look at it
 
     fn assert_domain_cgroup(cg: &Path) -> Result<()> {
@@ -160,6 +162,13 @@ impl MemoryInjector {
                 "cpu.max raw value"
             );
 
+            write_line(cg.join("cpu.max"), v)
+                .with_context(|| format!("failed writing cpu.max='{}' at {}", v, cg.display()))?;
+        }
+
+        // write knobs (only if present)
+        debug!("writing cpu.weight");
+        if let Some(v) = plan.injectors.memory_config.cpu_max.as_deref() {
             write_line(cg.join("cpu.max"), v)
                 .with_context(|| format!("failed writing cpu.max='{}' at {}", v, cg.display()))?;
         }
@@ -347,12 +356,12 @@ impl crate::injector::ChaosInjector for MemoryInjector {
         "memory"
     }
 
-    fn apply(&mut self, plan: &Plan) -> Result<()> {
-        MemoryInjector::apply(self, plan)
+    fn apply(&mut self, plan: Plan) -> Result<()> {
+        MemoryConfig::apply(self, &plan)
     }
 
     fn revert(&mut self) -> Result<()> {
-        MemoryInjector::revert(self)
+        MemoryConfig::revert(self)
     }
 }
 
@@ -519,7 +528,7 @@ mod tests {
         fs::create_dir_all(&cgroup).unwrap();
         fs::write(cgroup.join("cgroup.type"), "domain\n").unwrap();
 
-        MemoryInjector::assert_domain_cgroup(&cgroup).unwrap();
+        MemoryConfig::assert_domain_cgroup(&cgroup).unwrap();
     }
 
     #[test]
@@ -529,7 +538,7 @@ mod tests {
         fs::create_dir_all(&cgroup).unwrap();
         fs::write(cgroup.join("cgroup.type"), "threaded\n").unwrap();
 
-        let err = MemoryInjector::assert_domain_cgroup(&cgroup).unwrap_err().to_string();
+        let err = MemoryConfig::assert_domain_cgroup(&cgroup).unwrap_err().to_string();
         assert!(err.contains("threaded"));
         assert!(err.contains("cannot move PID"));
     }

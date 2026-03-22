@@ -1,13 +1,12 @@
 use crate::injector::ChaosInjector;
 use crate::plans::Plan;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tracing::{debug, info, warn};
 
 fn major_minor(device_path: &str) -> Result<String> {
@@ -25,6 +24,7 @@ fn major_minor(device_path: &str) -> Result<String> {
     Ok(format!("{}:{}", major, minor))
 }
 
+// make sure stuff is enabled so you dont have to redo the manual setup after a reboot
 fn io_enabled() -> Result<()> {
     let root_subtree = Path::new("/sys/fs/cgroup/cgroup.subtree_control");
     let subtree = fs::read_to_string(root_subtree)?;
@@ -42,6 +42,7 @@ fn io_enabled() -> Result<()> {
     Ok(())
 }
 
+// simple disk speed test (control vs experimental)
 fn run_disk_test(label: &str) -> Result<f64> {
     info!(label, "starting disk test");
 
@@ -65,6 +66,7 @@ fn run_disk_test(label: &str) -> Result<f64> {
         "disk test complete"
     );
 
+    // cleanup test file
     let _ = fs::remove_file("testfile");
 
     Ok(mbps)
@@ -75,7 +77,6 @@ pub struct BlockDelayInjector {
     applied: bool,
     io_max_path: Option<PathBuf>,
     saved_io_max: Option<String>,
-    control_speed_mbps: Option<f64>,
 }
 
 impl ChaosInjector for BlockDelayInjector {
@@ -83,40 +84,25 @@ impl ChaosInjector for BlockDelayInjector {
         "block_delay"
     }
 
-    fn apply(&mut self, plan: &Plan) -> Result<()> {
+    fn apply(&mut self, plan: Plan) -> Result<()> {
         let cfg = &plan.injectors.block_config;
-
-        if !cfg.enabled {
-            debug!("block delay injector not enabled; skipping");
-            return Ok(());
-        }
 
         io_enabled()?;
 
         let device = cfg.device.as_ref().expect("Device must be specified");
-        let major_minor = major_minor(device)?;
-        info!(
-            device,
-            major_minor,
-            "resolved block device"
-        );
+        let mm = major_minor(device)?;
+        info!(device, major_minor = %mm, "resolved block device");
 
         let base_path = Path::new("/sys/fs/cgroup/chaosfilter");
         let cgroup_path = base_path.join(&plan.name);
-        info!(
-            cgroup = ?cgroup_path,
-            "creating cgroup"
-        );
+        info!(cgroup = ?cgroup_path, "creating cgroup");
 
         if !base_path.exists() {
             fs::create_dir(base_path)?;
             info!("created base chaosfilter cgroup directory");
         }
 
-        debug!(
-            base = ?base_path,
-            "checking io controller availability"
-        );
+        debug!(base = ?base_path, "checking io controller availability");
 
         let chaos_subtree = base_path.join("cgroup.subtree_control");
 
@@ -138,15 +124,9 @@ impl ChaosInjector for BlockDelayInjector {
 
         if !cgroup_path.exists() {
             fs::create_dir(&cgroup_path)?;
-            info!(
-                cgroup = ?cgroup_path,
-                "created plan cgroup directory"
-            );
+            info!(cgroup = ?cgroup_path, "created plan cgroup directory");
         } else {
-            debug!(
-                cgroup = ?cgroup_path,
-                "plan cgroup already exists"
-            );
+            debug!(cgroup = ?cgroup_path, "plan cgroup already exists");
         }
 
         let io_max = cgroup_path.join("io.max");
@@ -155,11 +135,10 @@ impl ChaosInjector for BlockDelayInjector {
                 path = ?io_max,
                 "io.max not found; the io controller may not be enabled"
             );
-
             return Ok(());
         }
 
-        let control_speed = run_disk_test("CONTROL")?;
+        run_disk_test("CONTROL")?;
 
         let self_pid = std::process::id();
         let procs_path = cgroup_path.join("cgroup.procs");
@@ -171,12 +150,9 @@ impl ChaosInjector for BlockDelayInjector {
         );
 
         let current = fs::read_to_string(&io_max)?;
-        debug!(
-            contents = current.trim(),
-            "current io.max"
-        );
+        debug!(contents = current.trim(), "current io.max");
 
-        let mut rule = format!("{}", major_minor);
+        let mut rule = mm;
 
         if let Some(rbps) = cfg.rbps {
             rule.push_str(&format!(" rbps={}", rbps));
@@ -191,72 +167,42 @@ impl ChaosInjector for BlockDelayInjector {
             rule.push_str(&format!(" wiops={}", wiops));
         }
 
-        debug!(
-            rule,
-            "applying throttle rule"
-        );
+        debug!(rule, "applying throttle rule");
 
         {
             let mut file = fs::OpenOptions::new().write(true).open(&io_max)?;
             file.write_all(rule.as_bytes())?;
         }
 
-        self.applied = true;
         self.io_max_path = Some(io_max);
         self.saved_io_max = Some(current);
-        self.control_speed_mbps = Some(control_speed);
-
-        thread::sleep(Duration::from_secs(1));
+        self.applied = true;
 
         Ok(())
     }
 
     fn revert(&mut self) -> Result<()> {
         if !self.applied {
+            debug!("block delay injector not applied; skipping revert");
             return Ok(());
         }
 
-        let control_speed = self
-            .control_speed_mbps
-            .ok_or_else(|| anyhow!("internal error: block_delay control speed missing"))?;
-
-        let experimental_speed = run_disk_test("EXPERIMENTAL")?;
-
-        let io_max = self
+        let path = self
             .io_max_path
             .as_ref()
-            .ok_or_else(|| anyhow!("internal error: block_delay io_max path missing"))?;
+            .expect("io_max_path set when applied");
         let saved = self
             .saved_io_max
-            .as_ref()
-            .ok_or_else(|| anyhow!("internal error: block_delay saved io.max missing"))?;
+            .as_deref()
+            .expect("saved_io_max set when applied");
 
         info!("restoring original io.max");
-        {
-            let mut file = fs::OpenOptions::new().write(true).open(io_max)?;
-            file.write_all(saved.as_bytes())?;
-        }
-
-        info!("block throttling applied and reverted");
-
-        let drop = control_speed - experimental_speed;
-        let percent = (drop / control_speed) * 100.0;
-
-        let results = format!(
-            "\n========== RESULTS ==========\n\
-            Control Speed:      {:.2} MB/s\n\
-            Experimental Speed: {:.2} MB/s\n\
-            Performance Drop:   {:.2}% slower\n\
-            =============================\n",
-            control_speed, experimental_speed, percent
-        );
-
-        println!("{}", results);
+        let mut file = fs::OpenOptions::new().write(true).open(path)?;
+        file.write_all(saved.as_bytes())?;
 
         self.applied = false;
         self.io_max_path = None;
         self.saved_io_max = None;
-        self.control_speed_mbps = None;
 
         Ok(())
     }

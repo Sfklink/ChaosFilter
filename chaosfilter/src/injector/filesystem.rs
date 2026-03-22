@@ -185,8 +185,8 @@ impl crate::injector::ChaosInjector for FilesystemInjector {
         "filesystem"
     }
 
-    fn apply(&mut self, plan: &Plan) -> Result<()> {
-        FilesystemInjector::apply(self, plan)
+    fn apply(&mut self, plan: Plan) -> Result<()> {
+        FilesystemInjector::apply(self, &plan)
     }
 
     fn revert(&mut self) -> Result<()> {

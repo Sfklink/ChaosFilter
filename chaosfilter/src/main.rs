@@ -1,10 +1,11 @@
 use anyhow::Context;
 
 use chaosfilter::plans::{Plan, RunConfigArgs};
-use chaosfilter::injector::cpu_memory::validate_memory_config;
-use chaosfilter::injector::network::validate_iface_exists;
-use chaosfilter::injector::{block_delay, cpu_memory, network, ChaosInjector};
+use chaosfilter::injector::block_delay::BlockDelayInjector;
+use chaosfilter::injector::cpu_memory::{validate_memory_config, MemoryInjector};
 use chaosfilter::injector::filesystem::{validate_fd_config, FilesystemInjector};
+use chaosfilter::injector::network::{validate_iface_exists, NetworkInjector};
+use chaosfilter::injector::ChaosInjector;
 
 use clap::{Parser, Subcommand};
 use std::sync::mpsc;
@@ -42,8 +43,7 @@ fn main() {
 ///     - Validates the plan using [`chaosfilter_common::validate_plan`].
 ///
 /// - For [`Commands::Chaos`]:
-///     - Builds a plan via [`RunLikeArgs::plan_from_args`].
-///     - Executes the plan via [`chaosfilter_controller::qdiscs::run_plan`].
+///     - Loads the plan from the config file and runs [`run_plan`] (injectors apply → hold → revert).
 ///
 /// - For ['Commands::Init']
 ///     - Outputs a .toml config file to eprintlnCWD.
@@ -137,44 +137,45 @@ where
 }
 
 pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
-    let injectors: Vec<Box<dyn ChaosInjector>> = vec![
-        Box::new(cpu_memory::MemoryInjector::default()),
-        Box::new(network::NetworkInjector::default()),
-        Box::new(block_delay::BlockDelayInjector::default()),
-        Box::new(FilesystemInjector::default()),
-    ];
+    let mut injectors: Vec<Box<dyn ChaosInjector>> = Vec::new();
 
-    let mut active_injectors: Vec<Box<dyn ChaosInjector>> = Vec::new();
-
-    for mut injector in injectors {
-        let enabled = match injector.name() {
-            "memory" => plan.injectors.memory_config.enabled,
-            "network" => plan.injectors.network_config.enabled,
-            "block_delay" => plan.injectors.block_config.enabled,
-            "filesystem" => plan.injectors.filesystem_config.enabled,
-            _ => false,
-        };
-
-        if enabled {
-            injector
-                .apply(plan)
-                .with_context(|| format!("apply failed ({})", injector.name()))?;
-            active_injectors.push(injector);
-        }
+    if plan.injectors.memory_config.enabled {
+        injectors.push(Box::new(MemoryInjector::default()));
+    }
+    if plan.injectors.network_config.enabled {
+        injectors.push(Box::new(NetworkInjector::default()));
+    }
+    if plan.injectors.block_config.enabled {
+        injectors.push(Box::new(BlockDelayInjector::default()));
+    }
+    if plan.injectors.filesystem_config.enabled {
+        injectors.push(Box::new(FilesystemInjector::default()));
     }
 
-    let (ctrlc_tx, ctrlc_rx) = mpsc::channel::<()>();
+    for injector in injectors.iter_mut() {
+        println!("starting thing here because yes");
+        let n = ChaosInjector::name(injector.as_ref());
+        injector
+            .apply(plan.clone())
+            .with_context(|| format!("apply failed ({n})"))?;
+    }
+
+    let (stop_tx, stop_rx) = mpsc::channel::<()>();
     ctrlc::set_handler(move || {
-        let _ = ctrlc_tx.send(());
+        let _ = stop_tx.send(());
     })?;
 
-    let sleep_deadline = Duration::from_secs(plan.schedule.duration_s);
-    let _ = ctrlc_rx.recv_timeout(sleep_deadline);
+    let hold = Duration::from_secs(plan.schedule.duration_s);
+    match stop_rx.recv_timeout(hold) {
+        Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+        Err(e) => return Err(anyhow::anyhow!("failed while waiting for stop signal: {e}")),
+    }
 
-    for mut injector in active_injectors {
+    for injector in injectors.iter_mut() {
+        let n = ChaosInjector::name(injector.as_ref());
         injector
             .revert()
-            .with_context(|| format!("revert failed ({})", injector.name()))?;
+            .with_context(|| format!("revert failed ({n})"))?;
     }
 
     Ok(())

@@ -17,7 +17,7 @@ use tracing::{debug, error, info, warn};
 // Here, we are making the mistake of supplying domain logic to itself internally, we don't like that.
 // It takes in arguments, it does the thing.  Right now, this stinks, and is not testable.
 #[derive(Default)]
-pub struct NetworkInjector {
+pub struct NetworkConfig {
     applied: bool,
     iface: Option<String>,
     pub duration_s: u64,
@@ -25,6 +25,8 @@ pub struct NetworkInjector {
     pub netem_loss_percent: f64,
     pub ebpf_handle: Option<EbpfHandle>,
 }
+
+pub type NetworkInjector = NetworkConfig;
 
 /// Summary statistics parsed from `ping` output.
 ///
@@ -40,7 +42,7 @@ pub struct PingStats {
     pub rtt_max: f32,
 }
 
-impl NetworkInjector {
+impl NetworkConfig {
     /// Prints the current qdisc state for `iface` (best effort).
     ///
     /// This helper is intentionally non-fatal: failures are logged as warnings
@@ -78,7 +80,7 @@ impl NetworkInjector {
 
     /// Applies `tc netem` according to `plan.injectors.qdisc_netem`.
     ///
-    /// This method updates internal injector state so that [`NetworkInjector::revert`]
+    /// This method updates internal injector state so that [`NetworkConfig::revert`]
     /// can undo changes later.
     ///
     /// # Arguments
@@ -260,7 +262,7 @@ impl NetworkInjector {
     /// Failures are reported via printed messages.
     ///
     /// # Notes
-    /// `fq_codel` is used as a known baseline so [`NetworkInjector::revert`] can be deterministic.
+    /// `fq_codel` is used as a known baseline so [`NetworkConfig::revert`] can be deterministic.
     pub fn create_restore_root(iface: &str) {
         let status = Command::new("tc")
             .args(["qdisc", "replace", "dev", iface, "root", "fq_codel"])
@@ -338,8 +340,8 @@ impl NetworkInjector {
     ///
     /// # Side Effects
     /// If chaos was applied:
-    /// - Restores a baseline root qdisc via [`NetworkInjector::create_restore_root`].
-    /// - Prints verification output via [`NetworkInjector::show_qdisc_state`].
+    /// - Restores a baseline root qdisc via [`NetworkConfig::create_restore_root`].
+    /// - Prints verification output via [`NetworkConfig::show_qdisc_state`].
     /// - Clears internal state (`applied`, `iface`).
     ///
     /// # Requires
@@ -420,17 +422,12 @@ impl crate::injector::ChaosInjector for NetworkInjector {
         "network"
     }
 
-    fn apply(&mut self, plan: &Plan) -> Result<()> {
-        if !plan.injectors.network_config.enabled {
-            debug!("network injector not enabled; skipping");
-            return Ok(());
-        }
-
+    fn apply(&mut self, plan: Plan) -> Result<()> {
         let mut iface = plan
             .targets
             .iface
             .as_deref()
-            .ok_or_else(|| anyhow!("targets.iface required for ping report"))?
+            .ok_or_else(|| anyhow!("targets.iface required for network injector"))?
             .to_string();
 
         if iface == "default" {
@@ -438,13 +435,11 @@ impl crate::injector::ChaosInjector for NetworkInjector {
                 .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?;
         }
 
-        let iface_str: &str = &iface;
-        debug!("run_plan({})", iface_str);
-        NetworkInjector::apply(self, plan, iface_str)
+        NetworkConfig::apply(self, &plan, &iface)
     }
 
     fn revert(&mut self) -> Result<()> {
-        NetworkInjector::revert(self)
+        NetworkConfig::revert(self)
     }
 }
 
