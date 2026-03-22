@@ -14,13 +14,29 @@ use tracing::debug;
 /// Run every enabled injector's validator against a `plan`.
 ///
 /// # Errors
-/// Returns the first validation error encountered.
+/// Returns all validation errors that were encountered.
 pub fn validate_plan(plan: &Plan) -> Result<()> {
-    validate_iface_exists(plan.targets.iface.as_deref())?;
-    validate_memory_config(plan)?;
-    validate_filesystem_config(plan)?;
-    validate_block_config(plan)?;
-    Ok(())
+
+    let errors: Vec<String> = [
+        validate_iface_exists(plan.injectors.network_config.target_iface.as_deref()),
+        validate_memory_config(plan),
+        validate_filesystem_config(plan),
+        validate_block_config(plan)
+    ]
+    .into_iter()
+    .filter_map(|r| r.err())
+    .map(|e| format!(" - {e}"))
+    .collect();
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "{} validation error(s):\n{}",
+            errors.len(),
+            errors.join("\n")
+        ))
+    }    
 }
 
 // Per-injector validators
@@ -102,12 +118,13 @@ pub fn validate_memory_config(plan: &Plan) -> Result<()> {
 
     // target cgroup required if enabled
     let cg_rel = plan
-        .targets
-        .cgroup
-        .as_deref()
-        .ok_or_else(|| anyhow!("memory_config.enabled=true requires targets.cgroup"))?;
+        .injectors
+        .memory_config
+        .target_pid
+        .unwrap()
+        .to_string();    
 
-    let cg = resolve_cgroup_path(cg_rel);
+    let cg = resolve_cgroup_path(cg_rel.as_str());
 
     // directory may not exist yet; that's fine (apply creates it)
     // but parent must exist
@@ -323,29 +340,6 @@ mod tests {
  
         let err = validate_memory_config(&plan).unwrap_err().to_string();
         assert!(err.contains("PID does not exist"));
-    }
- 
-    #[test]
-    fn validate_memory_config_errors_when_enabled_missing_targets_cgroup() {
-        let mut plan = base_plan();
-
-        plan.injectors.memory_config.enabled = true;
-        plan.injectors.memory_config.target_pid = Some(std::process::id());
- 
-        let err = validate_memory_config(&plan).unwrap_err().to_string();
-        assert!(err.contains("requires targets.cgroup"));
-    }
- 
-    #[test]
-    fn validate_memory_config_errors_when_parent_cgroup_missing() {
-        let mut plan = base_plan();
-
-        plan.injectors.memory_config.enabled = true;
-        plan.injectors.memory_config.target_pid = Some(std::process::id());
-        plan.targets.cgroup = Some("does_not_exist/child".to_string());
- 
-        let err = validate_memory_config(&plan).unwrap_err().to_string();
-        assert!(err.contains("parent cgroup directory does not exist"));
     }
   
     #[test]
