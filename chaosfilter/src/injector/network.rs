@@ -12,6 +12,7 @@ use tracing::{debug, error, info, warn};
 /// tc netem injector state.
 ///
 /// Tracks whether chaos was applied so `revert` can be idempotent.
+#[derive(Default)]
 pub struct NetworkConfig {
     applied: bool,
     iface: Option<String>,
@@ -406,13 +407,13 @@ impl crate::injector::ChaosInjector for NetworkInjector {
     }
 
     fn apply(&mut self, plan: Plan) -> Result<()> {
-       let mut iface = plan
-                      .injectors
-                      .network_config
-                      .target_iface
-                      .as_deref()
-                      .ok_or_else(|| anyhow!("targets.iface required for ping report"))?
-                      .to_string();
+       let iface = plan
+            .injectors
+            .network_config
+            .target_iface
+            .as_deref()
+            .ok_or_else(|| anyhow!("targets.iface required for ping report"))?
+            .to_string();
 
         NetworkConfig::apply(self, &plan, &iface)
     }
