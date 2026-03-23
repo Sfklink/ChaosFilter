@@ -16,6 +16,7 @@
 //! nothing that the kernel *doesn't* automatically kill the process, but any
 //! code that doesn't handle `EMFILE` will crash or malfunction.
 
+use super::ChaosInjector;
 use crate::plans::Plan;
 use anyhow::{anyhow, Result, Context};
 use libc::{self, rlimit64, RLIMIT_NOFILE};
@@ -180,7 +181,7 @@ impl FilesystemInjector {
     }
 }
 
-impl crate::injector::ChaosInjector for FilesystemInjector {
+impl ChaosInjector for FilesystemInjector {
     fn name(&self) -> &'static str {
         "filesystem"
     }

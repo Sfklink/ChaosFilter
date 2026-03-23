@@ -1,4 +1,4 @@
-use crate::injector::ChaosInjector;
+use super::ChaosInjector;
 use crate::plans::Plan;
 use anyhow::{bail, Result};
 use std::fs;

@@ -3,6 +3,7 @@
 //! Creates/uses a target cgroup, optionally moves a PID into it, writes cpu/memory knobs,
 //! and can revert by restoring previous knob values (best effort).
 
+use super::ChaosInjector;
 use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::{
@@ -351,7 +352,7 @@ fn read_pid_cgroup_v2(pid: u32) -> Option<PathBuf> {
     None
 }
 
-impl crate::injector::ChaosInjector for MemoryInjector {
+impl ChaosInjector for MemoryInjector {
     fn name(&self) -> &'static str {
         "memory"
     }

@@ -1,11 +1,13 @@
 use anyhow::Context;
 
+use chaosfilter::injector::{
+    block_delay::BlockDelayInjector,
+    cpu_memory::{validate_memory_config, MemoryInjector},
+    filesystem::{validate_fd_config, FilesystemInjector},
+    network::{validate_iface_exists, NetworkInjector},
+    ChaosInjector,
+};
 use chaosfilter::plans::{Plan, RunConfigArgs};
-use chaosfilter::injector::block_delay::BlockDelayInjector;
-use chaosfilter::injector::cpu_memory::{validate_memory_config, MemoryInjector};
-use chaosfilter::injector::filesystem::{validate_fd_config, FilesystemInjector};
-use chaosfilter::injector::network::{validate_iface_exists, NetworkInjector};
-use chaosfilter::injector::ChaosInjector;
 
 use clap::{Parser, Subcommand};
 use std::sync::mpsc;
