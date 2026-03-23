@@ -12,11 +12,6 @@ use tracing::{debug, error, info, warn};
 /// tc netem injector state.
 ///
 /// Tracks whether chaos was applied so `revert` can be idempotent.
-///
-// THIS IS A PROBLEM.
-// Here, we are making the mistake of supplying domain logic to itself internally, we don't like that.
-// It takes in arguments, it does the thing.  Right now, this stinks, and is not testable.
-#[derive(Default)]
 pub struct NetworkConfig {
     applied: bool,
     iface: Option<String>,
@@ -26,19 +21,9 @@ pub struct NetworkConfig {
     pub ebpf_handle: Option<EbpfHandle>,
 }
 
-/// Summary statistics parsed from `ping` output.
-///
-/// # Notes:
-/// RTT values are in milliseconds. Packet loss is a percentage in the range `0.0..=100.0`.
-#[derive(Debug)]
-pub struct PingStats {
-    pub transmitted: u32,
-    pub received: u32,
-    pub loss_pct: f32,
-    pub rtt_min: f32,
-    pub rtt_avg: f32,
-    pub rtt_max: f32,
-}
+pub type NetworkInjector = NetworkConfig;
+
+
 
 impl NetworkConfig {
     /// Prints the current qdisc state for `iface` (best effort).
@@ -415,85 +400,26 @@ impl NetworkConfig {
     }
 }
 
-/// Runs the plan end-to-end (baseline → apply → hold → revert).
-///
-/// This is the one-shot entrypoint used by the CLI to execute network chaos
-/// and produce a basic “before vs during” ping comparison report.
-///
-/// # Arguments
-/// * `plan` - Chaos plan to run.
-///
-/// # Returns
-/// Returns `Ok(())` after:
-/// - Baseline ping stats are collected,
-/// - Chaos is applied and measured,
-/// - And cleanup/revert succeeds.
-///
-/// # Side Effects
-/// - Executes `ping` to collect baseline and chaos metrics.
-/// - Applies and reverts system-level chaos via [`NetworkConfig`].
-/// - Prints progress and a comparison report to stdout.
-///
-/// # Requires
-/// - A valid [`Plan`] (validated by [`validate_plan`]).
-/// - CAP_NET_ADMIN privileges (typically `sudo`) to modify qdiscs.
-/// - Network connectivity to the ping target (currently `8.8.8.8`).
-///
-/// # Errors
-/// Returns an error if:
-/// - Plan validation fails.
-/// - `targets.iface` is missing.
-/// - Baseline or chaos ping stats cannot be collected.
-/// - Applying or reverting the qdisc fails.
-pub fn run_plan(plan: &Plan) -> Result<()> {
-    if !plan.injectors.network_config.enabled {
-        debug!("network injector not enabled; skipping");
-        return Ok(());
+impl crate::injector::ChaosInjector for NetworkInjector {
+    fn name(&self) -> &'static str {
+        "network"
     }
 
-    // need to resolve iface ONE time here, because we were getting it in multiple spots and
-    // this was causing a grotesque error where we couldn't declare things publically
-    // and except them to cooperate between functions
+    fn apply(&mut self, plan: Plan) -> Result<()> {
+       let mut iface = plan
+                      .injectors
+                      .network_config
+                      .target_iface
+                      .as_deref()
+                      .ok_or_else(|| anyhow!("targets.iface required for ping report"))?
+                      .to_string();
 
-    let mut iface = plan
-        .injectors
-        .network_config
-        .target_iface
-        .as_deref()
-        .ok_or_else(|| anyhow!("targets.iface required for ping report"))?
-        .to_string();
-
-    if iface == "default" {
-        iface = get_default_iface()
-            .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?;
+        NetworkConfig::apply(self, &plan, &iface)
     }
 
-    let iface_str: &str = &iface;
-    debug!("run_plan({})", iface_str);
-    // apply the mutators
-    let mut qdisc = NetworkConfig::default();
-    qdisc.apply(plan, iface_str)?;
-
-    // Maintain our ctrl-c functionality
-    let dev = iface.clone();
-    debug!("setting ctrl-c handler for safe quit");
-
-    ctrlc::set_handler(move || {
-        warn!(iface = %dev, "Ctrl-C received; removing qdisc and exiting");
-        NetworkConfig::delete_root_qdisc(&dev);
-        std::process::exit(130);
-    })?;
-    
-    info!(
-        duration_s = plan.schedule.duration_s, 
-        "freezing"
-    );
-    std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
-    // ugh
-    // Revert
-    qdisc.revert()?;
-
-    Ok(())
+    fn revert(&mut self) -> Result<()> {
+        NetworkConfig::revert(self)
+    }
 }
 
 /// Validates that a network interface exists on the host.
@@ -598,7 +524,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn validate_iface_exists_success() {
         // there does exist the change of ip not being available, which can happen
-        // in the case that we are not running as root
+        // in the case that we are not running as root 
 
         let ip_exists = std::process::Command::new("sh")
             .args(["-c", "command -v ip >/dev/null 2>&1"])

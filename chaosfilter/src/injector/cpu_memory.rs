@@ -29,6 +29,8 @@ pub struct MemoryConfig {
     prev_swap_max: Option<String>,
 }
 
+pub type MemoryInjector = MemoryConfig;
+
 /*
 TODO:
     Create validate.rs, and move validation functions there.
@@ -204,11 +206,6 @@ impl MemoryConfig {
             "post-apply cgroup state"
         );
 
-        let dur = plan.schedule.duration_s;
-        info!(duration_s = dur, "holding chaos");
-        std::thread::sleep(std::time::Duration::from_secs(dur));
-        info!("duration elapsed; reverting");
-
         Ok(())
     }
 
@@ -356,22 +353,18 @@ fn read_pid_cgroup_v2(pid: u32) -> Option<PathBuf> {
     None
 }
 
-// apply and revert
-// called from main
-pub fn run_plan(plan: &Plan) -> Result<()> {
-    if !plan.injectors.memory_config.enabled {
-        debug!("memory injector not enabled; skipping");
-        return Ok(());
+impl crate::injector::ChaosInjector for MemoryInjector {
+    fn name(&self) -> &'static str {
+        "memory"
     }
-    validate_memory_config(plan)?;
 
-    let mut cg = MemoryConfig::default();
-    cg.apply(plan)?;
+    fn apply(&mut self, plan: Plan) -> Result<()> {
+        MemoryConfig::apply(self, &plan)
+    }
 
-    std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
-
-    cg.revert()?;
-    Ok(())
+    fn revert(&mut self) -> Result<()> {
+        MemoryConfig::revert(self)
+    }
 }
 
 #[cfg(test)]
