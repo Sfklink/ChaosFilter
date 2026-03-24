@@ -60,16 +60,15 @@ jobs:
 
       - name: Copy docs into site repo
         run: |
-          # remove previous docs and copy new ones
-          rm -rf site-repo/docs
-          cp -r target/doc site-repo/docs
+          cp -r target/doc/. site-repo/
 
       - name: Commit and push
         working-directory: site-repo
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/
+          
+          git add .
           
           # Only commit if anything in cargo docs actually changed
           if git diff --cached --quiet; then
