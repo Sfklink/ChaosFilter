@@ -1,0 +1,80 @@
+name: Transfer Cargo Doc
+
+on:
+  push:
+    branches: ['main'] # Change this to only do main
+
+jobs:
+  build-and-transfer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly
+          targets: x86_64-unknown-linux-musl
+          components: rust-src, llvm-tools-preview
+      
+      - name: Install bpf-linker
+        run: cargo install bpf-linker
+
+      - name: Cache Cargo registry & build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-docs-
+
+      - name: Build cargo doc
+        run: cargo doc
+
+      - name: Add docs redirect to index.html
+        run: |
+          cat > target/doc/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <meta charset="utf-8">
+              <meta http-equiv="refresh" content="0; url=chaosfilter/index.html">
+              <title>ChaosFilter Docs</title>
+            </head>
+            <body>
+              <p>Redirecting to <a href="chaosfilter/index.html">chaosfilter</a>…</p>
+            </body>
+          </html>
+          EOF
+
+      - name: Clone capstone static site repo
+        run: |
+          git clone \
+            https://x-access-token:${{ secrets.DOCS_SITE_TOKEN }}@github.com/UofL-CSE-Capstone-Static-Websites/2026-spring-virt-linux-kernel-development-static-site-content.git \
+            site-repo
+
+      - name: Copy docs into site repo
+        run: |
+          cp -r target/doc/. site-repo/
+
+      - name: Commit and push
+        working-directory: site-repo
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add .
+          
+          # Only commit if anything in cargo docs actually changed
+          if git diff --cached --quiet; then
+            echo "No doc changes detected, skipping..."
+          else
+            CHAOSFILTER_SHA="${{ github.sha }}"
+            git commit -m "docs: update from ChaosFilter@${CHAOSFILTER_SHA::7}"
+            git push
+          fi
