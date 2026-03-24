@@ -55,7 +55,7 @@ jobs:
       - name: Clone capstone static site repo
         run: |
           git clone \
-            https://x-access-token:${{ secrets.CARGO_DOCS_SITE_TOKEN }}@github.com/UofL-CSE-Capstone-Static-Websites/2026-spring-virt-linux-kernel-development-static-site-content.git \
+            https://x-access-token:${{ secrets.DOCS_SITE_TOKEN }}@github.com/UofL-CSE-Capstone-Static-Websites/2026-spring-virt-linux-kernel-development-static-site-content.git \
             site-repo
 
       - name: Copy docs into site repo
