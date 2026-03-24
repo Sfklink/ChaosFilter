@@ -2,7 +2,7 @@ name: Transfer Cargo Doc
 
 on:
   push:
-    branches: ['**'] # Change this to only do main
+    branches: ['main'] # Change this to only do main
 
 jobs:
   build-and-transfer:
