@@ -27,3 +27,50 @@ jobs:
           key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-docs-
+
+      - name: Build cargo doc
+        run: cargo doc
+
+      - name: Add docs redirect to index.html
+        run: |
+          cat > target/doc/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <meta charset="utf-8">
+              <meta http-equiv="refresh" content="0; url=chaosfilter/index.html">
+              <title>ChaosFilter Docs</title>
+            </head>
+            <body>
+              <p>Redirecting to <a href="chaosfilter/index.html">chaosfilter</a>…</p>
+            </body>
+          </html>
+          EOF
+
+      - name: Clone capstone static site repo
+        run: |
+          git clone \
+            https://x-access-token:${{ secrets.CARGO_DOCS_SITE_TOKEN }}@github.com/UofL-CSE-Capstone-Static-Websites/2026-spring-virt-linux-kernel-development-static-site-content.git \
+            site-repo
+
+      - name: Copy docs into site repo
+        run: |
+          # remove previous docs and copy new ones
+          rm -rf site-repo/docs
+          cp -r target/doc site-repo/docs
+
+      - name: Commit and push
+        working-directory: site-repo
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/
+          
+          # Only commit if anything in cargo docs actually changed
+          if git diff --cached --quiet; then
+            echo "No doc changes detected, skipping..."
+          else
+            CHAOSFILTER_SHA="${{ github.sha }}"
+            git commit -m "docs: update from ChaosFilter@${CHAOSFILTER_SHA::7}"
+            git push
+          fi
