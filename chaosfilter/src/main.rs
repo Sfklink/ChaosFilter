@@ -361,28 +361,23 @@ mod test {
         let toml = r#"
             name = "test-config"
 
-           [injectors]
-            
-           [injectors.memory_config]
-           target_pid = 123
-           target_iface = "enp5s0"
+            [injectors]
+
+            [injectors.memory_config]
+            target_pid = 123
+
+            [injectors.network_config]
+            target_iface = "enp5s0"
 
             [schedule]
             duration_s = 1
             "#;
-
-        // Injectors were left out here to verify #[serde(default)]
 
         let mut file = NamedTempFile::new().unwrap();
         write!(file, "{toml}").unwrap();
 
         let plan = Plan::load_from_toml_file(file.path()).unwrap();
 
-
-        /*
-        TODO: This test is broken because the test-config toml is just stringified
-
-         */
         assert_eq!(plan.name, "test-config");
         assert_eq!(plan.injectors.memory_config.target_pid, Some(123));
         assert_eq!(plan.injectors.network_config.target_iface.as_deref(), Some("enp5s0"));

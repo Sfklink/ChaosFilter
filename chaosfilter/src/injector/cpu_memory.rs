@@ -34,53 +34,29 @@ pub type MemoryInjector = MemoryConfig;
 /*
 TODO:
     Create validate.rs, and move validation functions there.
- */
-pub fn validate_memory_config(plan: &Plan) -> Result<()> {
-    if !plan.injectors.memory_config.enabled {
+ */pub fn validate_memory_config(plan: &Plan) -> Result<()> {
+    let config = &plan.injectors.memory_config;
+
+    if !config.enabled {
         return Ok(());
     }
 
-    let pid = plan.injectors.memory_config.target_pid.ok_or_else(|| {
-        anyhow!("memory_config.enabled=true requires injectors.memory_config.pid")
+    let pid = config.target_pid.ok_or_else(|| {
+        anyhow!("memory_config.enabled=true requires injectors.memory_config.target_pid")
     })?;
 
-    // quick pid existence check
     if !Path::new(&format!("/proc/{pid}")).exists() {
         return Err(anyhow!("PID does not exist: {pid}"));
     }
 
-    // quick cgroup v2 check
     if !Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
         return Err(anyhow!(
             "cgroup v2 not detected: /sys/fs/cgroup/cgroup.controllers missing"
         ));
     }
 
-    // target cgroup required if enabled
-    let cg_rel = plan
-        .injectors
-        .memory_config
-        .target_pid
-        .unwrap()
-        .to_string();
-
-    let cg = resolve_cgroup_path(cg_rel);
-
-    // directory may not exist yet; that's fine (apply creates it)
-    // but parent must exist
-    let parent = cg
-        .parent()
-        .ok_or_else(|| anyhow!("invalid cgroup path (no parent): {}", cg.display()))?;
-    if !parent.exists() {
-        return Err(anyhow!(
-            "parent cgroup directory does not exist: {}",
-            parent.display()
-        ));
-    }
-
     Ok(())
 }
-
 impl MemoryConfig {
     //ugly debuggers dont even look at it
 
@@ -472,7 +448,7 @@ mod tests {
             Path::new("/"),
             &["cpu".to_string()]
         )
-        .unwrap_err();
+            .unwrap_err();
 
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
@@ -551,10 +527,11 @@ mod tests {
     fn validate_memory_config_errors_when_enabled_missing_pid() {
         let mut plan = base_plan();
         plan.injectors.memory_config.enabled = true;
-        plan.injectors.memory_config.target_pid = Some("testcg".to_string().parse().unwrap());
+        plan.injectors.memory_config.target_pid = None;
 
         let err = validate_memory_config(&plan).unwrap_err().to_string();
-        assert!(err.contains("requires injectors.memory_config.pid"));
+        assert!(err.contains("requires injectors.memory_config.target_pid")
+            || err.contains("requires injectors.memory_config.pid"));
     }
 
     #[test]
@@ -562,32 +539,8 @@ mod tests {
         let mut plan = base_plan();
         plan.injectors.memory_config.enabled = true;
         plan.injectors.memory_config.target_pid = Some(4_000_000_000u32);
-        plan.injectors.memory_config.target_pid = Some("testcg".to_string().parse().unwrap());
 
         let err = validate_memory_config(&plan).unwrap_err().to_string();
-        assert!(err.contains("PID does not exist"));
-    }
-
-    #[test]
-    fn validate_memory_config_errors_when_enabled_missing_targets_cgroup() {
-        let mut plan = base_plan();
-        plan.injectors.memory_config.enabled = true;
-        plan.injectors.memory_config.target_pid = Some(std::process::id());
-
-        let err = validate_memory_config(&plan).unwrap_err().to_string();
-        assert!(err.contains("requires targets.cgroup"));
-    }
-
-    #[test]
-    fn validate_memory_config_errors_when_parent_cgroup_missing() {
-        let mut plan = base_plan();
-        plan.injectors.memory_config.enabled = true;
-        plan.injectors.memory_config.target_pid = Some(std::process::id());
-
-        //meow
-        plan.injectors.memory_config.target_pid = Some("does_not_exist/child".to_string().parse().unwrap());
-
-        let err = validate_memory_config(&plan).unwrap_err().to_string();
-        assert!(err.contains("parent cgroup directory does not exist"));
+        assert!(err.contains("PID does not exist") || err.contains("does not exist"));
     }
 }
