@@ -15,7 +15,12 @@ jobs:
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@nightly
         with:
+          toolchain: nightly
           targets: x86_64-unknown-linux-musl
+          components: rust-src, llvm-tools-preview
+      
+      - name: Install bpf-linker
+        run: cargo install bpf-linker
 
       - name: Cache Cargo registry & build artifacts
         uses: actions/cache@v4
