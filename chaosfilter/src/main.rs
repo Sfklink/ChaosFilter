@@ -1,15 +1,12 @@
 use anyhow::Context;
 
 use chaosfilter::plans::{Plan, RunConfigArgs};
-
-use chaosfilter::injector::filesystem::FilesystemInjector;
 use chaosfilter::injector::block_delay::BlockDelayInjector;
-use chaosfilter::injector::cpu_memory::MemoryInjector;
-use chaosfilter::injector::filesystem::FilesystemInjector;
-use chaosfilter::injector::network::NetworkInjector;
+use chaosfilter::injector::cpu_memory::{validate_memory_config, MemoryInjector};
+use chaosfilter::injector::filesystem::{validate_fd_config, FilesystemInjector};
+use chaosfilter::injector::network::{validate_iface_exists, NetworkInjector};
 use chaosfilter::injector::ChaosInjector;
 
-use chaosfilter::validate::validate_plan;
 use clap::{Parser, Subcommand};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -94,7 +91,9 @@ where
     match cli.command {
         Commands::Validate(args) => {
             let plan = Plan::load_from_toml_file(&args.config)?;
-            validate_plan(&plan)?;
+            validate_memory_config(&plan)?;
+            validate_iface_exists(plan.targets.iface.as_deref())?;
+            validate_fd_config(&plan)?;
 
             println!("\nConfig OK.");
             Ok(())
@@ -102,7 +101,6 @@ where
 
         Commands::Chaos(args) => {
             let plan = Plan::load_from_toml_file(&args.config)?;
-            validate_plan(&plan)?;
             run_plan(&plan)?;
 
             println!("\nChaos Plan Complete.");
