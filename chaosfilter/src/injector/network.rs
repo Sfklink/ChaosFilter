@@ -22,10 +22,6 @@ pub struct EbpfHandle {
 /// tc netem injector state.
 ///
 /// Tracks whether chaos was applied so `revert` can be idempotent.
-///
-// THIS IS A PROBLEM.
-// Here, we are making the mistake of supplying domain logic to itself internally, we don't like that.
-// It takes in arguments, it does the thing.  Right now, this stinks, and is not testable.
 #[derive(Default)]
 pub struct NetworkConfig {
     applied: bool,
@@ -37,6 +33,8 @@ pub struct NetworkConfig {
 }
 
 pub type NetworkInjector = NetworkConfig;
+
+
 
 impl NetworkConfig {
     /// Prints the current qdisc state for `iface` (best effort).
@@ -104,8 +102,6 @@ impl NetworkConfig {
     pub fn apply(&mut self, plan: &Plan, iface: &str) -> Result<()> {
         let delay_ms = plan.injectors.network_config.delay_ms;
         let loss_percent = plan.injectors.network_config.loss_percent;
-
-        // This is new
         let network_cgroup_target = &plan.injectors.network_config.network_ebpf_cgroup;
 
         info!(
@@ -419,17 +415,13 @@ impl crate::injector::ChaosInjector for NetworkInjector {
     }
 
     fn apply(&mut self, plan: Plan) -> Result<()> {
-        let mut iface = plan
-            .targets
-            .iface
+       let iface = plan
+            .injectors
+            .network_config
+            .target_iface
             .as_deref()
-            .ok_or_else(|| anyhow!("targets.iface required for network injector"))?
+            .ok_or_else(|| anyhow!("targets.iface required for ping report"))?
             .to_string();
-
-        if iface == "default" {
-            iface = get_default_iface()
-                .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?;
-        }
 
         NetworkConfig::apply(self, &plan, &iface)
     }
@@ -588,7 +580,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn validate_iface_exists_success() {
         // there does exist the change of ip not being available, which can happen
-        // in the case that we are not running as root
+        // in the case that we are not running as root 
 
         let ip_exists = std::process::Command::new("sh")
             .args(["-c", "command -v ip >/dev/null 2>&1"])

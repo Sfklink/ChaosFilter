@@ -49,31 +49,25 @@ TODO:
 /// - The resolved cgroup directory doesn't exist.
 /// - `soft_limit > hard_limit` (kernel would reject this anyway)
 pub fn validate_fd_config(plan: &Plan) -> Result<()> {
-    if !plan.injectors.filesystem_config.enabled {
+    let config = &plan.injectors.filesystem_config;
+
+    if !config.enabled {
         return Ok(());
     }
 
-    let cgroup_rel = plan
-        .targets
-        .cgroup
-        .as_deref()
-        .ok_or_else(|| anyhow!("fd_config.enabled=true requires targets.cgroup"))?;
+    let pid = config.target_pid.ok_or_else(|| {
+        anyhow!("filesystem_config.enabled=true requires injectors.filesystem_config.target_pid")
+    })?;
 
-    let cgroup = resolve_cgroup_path(cgroup_rel);
-
-    if !cgroup.exists() {
-        return Err(anyhow!(
-            "target cgroup directory does not exist: {}",
-            cgroup.display()
-        ));
+    if !Path::new(&format!("/proc/{pid}")).exists() {
+        return Err(anyhow!("PID does not exist: {pid}"));
     }
-
-    let config = &plan.injectors.filesystem_config;
 
     if config.soft_limit > config.hard_limit {
         return Err(anyhow!(
-            "fd_config.soft_limit ({}) must be <= fd_config.hard_limit ({})",
-            config.soft_limit, config.hard_limit
+            "filesystem_config.soft_limit ({}) must be <= filesystem_config.hard_limit ({})",
+            config.soft_limit,
+            config.hard_limit
         ));
     }
 
@@ -93,7 +87,17 @@ impl FilesystemInjector {
 
         validate_fd_config(plan)?;
 
-        let cgroup = resolve_cgroup_path(plan.targets.cgroup.as_deref().unwrap());
+
+        // target cgroup required if enabled
+        let cg_rel = plan
+            .injectors
+            .filesystem_config
+            .target_pid
+            .unwrap()
+            .to_string();
+
+
+        let cgroup = resolve_cgroup_path(&*cg_rel);
         let config = &plan.injectors.filesystem_config;
 
         let pids = read_cgroup_pids(&cgroup)
@@ -279,7 +283,7 @@ mod tests {
     use super::*;
     use crate::plans::{
         BlockConfig, FileSystemConfig, Injectors, MemoryConfig as CliMemCfg,
-        NetworkConfig as CliNetCfg, Plan, Schedule, Targets
+        NetworkConfig as CliNetCfg, Plan, Schedule
     };
     use std::fs;
     use tempfile::TempDir;
@@ -287,10 +291,6 @@ mod tests {
     fn base_plan() -> Plan {
         Plan {
             name: "test".to_string(),
-            targets: Targets {
-                cgroup: None,
-                iface: None,
-            },
             schedule: Schedule { duration_s: 0 },
             injectors: Injectors {
                 network_config: CliNetCfg::default(),
@@ -376,57 +376,56 @@ mod tests {
     }
 
     #[test]
-    fn validate_fd_config_error_enabled_no_cgroup() {
+    fn validate_fd_config_error_enabled_no_pid() {
         let mut plan = base_plan();
 
         plan.injectors.filesystem_config.enabled = true;
+        plan.injectors.filesystem_config.target_pid = None;
         plan.injectors.filesystem_config.soft_limit = 64;
         plan.injectors.filesystem_config.hard_limit = 64;
 
         let err = validate_fd_config(&plan).unwrap_err().to_string();
-        assert!(err.contains("requires targets.cgroup"));
+        assert!(err.contains("requires injectors.filesystem_config.target_pid")
+            || err.contains("requires")
+            || err.contains("target_pid"));
     }
 
     #[test]
-    fn validate_fd_config_error_cgroup_missing() {
+    fn validate_fd_config_error_pid_missing() {
         let mut plan = base_plan();
 
         plan.injectors.filesystem_config.enabled = true;
+        plan.injectors.filesystem_config.target_pid = Some(4_000_000_000u32);
         plan.injectors.filesystem_config.soft_limit = 64;
         plan.injectors.filesystem_config.hard_limit = 64;
-        plan.targets.cgroup = Some("/nonexistent/cgroup/path".to_string());
 
         let err = validate_fd_config(&plan).unwrap_err().to_string();
-        assert!(err.contains("does not exist"));
+        assert!(err.contains("PID does not exist") || err.contains("does not exist"));
     }
 
     #[test]
     fn validate_fd_config_error_soft_greater_than_hard() {
-        let dir = TempDir::new().unwrap();
         let mut plan = base_plan();
 
         plan.injectors.filesystem_config.enabled = true;
+        plan.injectors.filesystem_config.target_pid = Some(std::process::id());
         plan.injectors.filesystem_config.soft_limit = 200;
         plan.injectors.filesystem_config.hard_limit = 100;
-        plan.targets.cgroup = Some(dir.path().to_str().unwrap().to_string());
 
         let err = validate_fd_config(&plan).unwrap_err().to_string();
         assert!(err.contains("soft_limit") && err.contains("hard_limit"));
     }
-
     #[test]
     fn validate_fd_config_ok() {
-        let dir = TempDir::new().unwrap();
         let mut plan = base_plan();
 
         plan.injectors.filesystem_config.enabled = true;
+        plan.injectors.filesystem_config.target_pid = Some(std::process::id());
         plan.injectors.filesystem_config.soft_limit = 64;
         plan.injectors.filesystem_config.hard_limit = 64;
-        plan.targets.cgroup = Some(dir.path().to_str().unwrap().to_string());
 
         validate_fd_config(&plan).unwrap();
     }
-
     #[test]
     fn not_applied_when_disabled() {
         let mut injector = FilesystemInjector::default();

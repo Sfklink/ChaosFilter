@@ -18,9 +18,6 @@ pub struct Plan {
     /// Human-readable plan name (for logs/UI).
     pub name: String,
 
-    /// Where chaos is applied (iface/cgroup).
-    pub targets: Targets,
-
     /// How long chaos should run.
     pub schedule: Schedule,
 
@@ -71,13 +68,13 @@ impl Plan {
                 .map(|w| w[1].to_string())
         }
 
-        if let Some(iface) = plan.targets.iface.as_deref()
-            && iface == "default"
-        {
-            plan.targets.iface = Some(
-                get_default_iface()
-                    .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?
-            );
+        if let Some(iface) = plan.injectors.network_config.target_iface.as_deref() {
+            if iface == "default" {
+                plan.injectors.network_config.target_iface = Some(
+                    get_default_iface()
+                        .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?
+                );
+            }
         }
 
         Ok(plan)
@@ -176,6 +173,9 @@ pub struct FileSystemConfig {
     #[serde(default)]
     pub enabled: bool,
 
+    /// PID to move / apply limits to.
+    pub target_pid: Option<u32>,
+
     /// New soft limit for RLIMIT_NOFILE applied to each PID in the cgroup. (e.g., 32, 64)
     /// Must be < hard_limit or it will cause issues.
     #[serde(default)]
@@ -187,17 +187,6 @@ pub struct FileSystemConfig {
     pub hard_limit: u64,
 }
 
-
-/// Target selection for chaos execution.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Targets {
-    /// Optional cgroup path relative to `/sys/fs/cgroup`.
-    #[serde(default)]
-    pub cgroup: Option<String>,
-
-    /// Network interface name (e.g. `enp5s0`).
-    pub iface: Option<String>,
-}
 
 /// Execution timing parameters for a chaos plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
