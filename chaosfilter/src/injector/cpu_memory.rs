@@ -3,7 +3,7 @@
 //! Creates/uses a target cgroup, optionally moves a PID into it, writes cpu/memory knobs,
 //! and can revert by restoring previous knob values (best effort).
 
-use crate::{plans::Plan, validate::validate_memory_config};
+use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::{
     fs,
@@ -27,6 +27,57 @@ pub struct MemoryConfig {
     prev_mem_max: Option<String>,
     prev_mem_high: Option<String>,
     prev_swap_max: Option<String>,
+}
+
+pub type MemoryInjector = MemoryConfig;
+
+/*
+TODO:
+    Create validate.rs, and move validation functions there.
+ */
+pub fn validate_memory_config(plan: &Plan) -> Result<()> {
+    if !plan.injectors.memory_config.enabled {
+        return Ok(());
+    }
+
+    let pid = plan.injectors.memory_config.target_pid.ok_or_else(|| {
+        anyhow!("memory_config.enabled=true requires injectors.memory_config.pid")
+    })?;
+
+    // quick pid existence check
+    if !Path::new(&format!("/proc/{pid}")).exists() {
+        return Err(anyhow!("PID does not exist: {pid}"));
+    }
+
+    // quick cgroup v2 check
+    if !Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
+        return Err(anyhow!(
+            "cgroup v2 not detected: /sys/fs/cgroup/cgroup.controllers missing"
+        ));
+    }
+
+    // target cgroup required if enabled
+    let cg_rel = plan
+        .targets
+        .cgroup
+        .as_deref()
+        .ok_or_else(|| anyhow!("memory_config.enabled=true requires targets.cgroup"))?;
+
+    let cg = resolve_cgroup_path(cg_rel);
+
+    // directory may not exist yet; that's fine (apply creates it)
+    // but parent must exist
+    let parent = cg
+        .parent()
+        .ok_or_else(|| anyhow!("invalid cgroup path (no parent): {}", cg.display()))?;
+    if !parent.exists() {
+        return Err(anyhow!(
+            "parent cgroup directory does not exist: {}",
+            parent.display()
+        ));
+    }
+
+    Ok(())
 }
 
 impl MemoryConfig {
@@ -318,6 +369,24 @@ impl crate::injector::ChaosInjector for MemoryInjector {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use crate::plans::{Injectors, MemoryConfig as MemCfg, NetworkConfig as NetCfg, Schedule, Targets};
+
+    fn base_plan() -> Plan {
+        Plan {
+            name: "test".to_string(),
+            targets: Targets {
+                cgroup: None,
+                iface: None,
+            },
+            schedule: Schedule { duration_s: 0 },
+            injectors: Injectors {
+                network_config: NetCfg::default(),
+                memory_config: MemCfg::default(),
+                block_config: Default::default(),
+                filesystem_config: Default::default(),
+            },
+        }
+    }
 
     #[test]
     fn resolve_cgroup_path_absolute() {
@@ -472,5 +541,54 @@ mod tests {
         let err = MemoryConfig::assert_domain_cgroup(&cgroup).unwrap_err().to_string();
         assert!(err.contains("threaded"));
         assert!(err.contains("cannot move PID"));
+    }
+
+    #[test]
+    fn validate_memory_config_ok_when_disabled() {
+        let plan = base_plan();
+        validate_memory_config(&plan).unwrap();
+    }
+
+    #[test]
+    fn validate_memory_config_errors_when_enabled_missing_pid() {
+        let mut plan = base_plan();
+        plan.injectors.memory_config.enabled = true;
+        plan.targets.cgroup = Some("testcg".to_string());
+
+        let err = validate_memory_config(&plan).unwrap_err().to_string();
+        assert!(err.contains("requires injectors.memory_config.pid"));
+    }
+
+    #[test]
+    fn validate_memory_config_errors_when_enabled_pid_missing_in_proc() {
+        let mut plan = base_plan();
+        plan.injectors.memory_config.enabled = true;
+        plan.injectors.memory_config.target_pid = Some(4_000_000_000u32);
+        plan.targets.cgroup = Some("testcg".to_string());
+
+        let err = validate_memory_config(&plan).unwrap_err().to_string();
+        assert!(err.contains("PID does not exist"));
+    }
+
+    #[test]
+    fn validate_memory_config_errors_when_enabled_missing_targets_cgroup() {
+        let mut plan = base_plan();
+        plan.injectors.memory_config.enabled = true;
+        plan.injectors.memory_config.target_pid = Some(std::process::id());
+
+        let err = validate_memory_config(&plan).unwrap_err().to_string();
+        assert!(err.contains("requires targets.cgroup"));
+    }
+
+    #[test]
+    fn validate_memory_config_errors_when_parent_cgroup_missing() {
+        let mut plan = base_plan();
+        plan.injectors.memory_config.enabled = true;
+        plan.injectors.memory_config.target_pid = Some(std::process::id());
+
+        plan.targets.cgroup = Some("does_not_exist/child".to_string());
+
+        let err = validate_memory_config(&plan).unwrap_err().to_string();
+        assert!(err.contains("parent cgroup directory does not exist"));
     }
 }
