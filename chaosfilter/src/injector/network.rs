@@ -92,8 +92,6 @@ impl NetworkConfig {
     pub fn apply(&mut self, plan: &Plan, iface: &str) -> Result<()> {
         let delay_ms = plan.injectors.network_config.delay_ms;
         let loss_percent = plan.injectors.network_config.loss_percent;
-
-        // This is new
         let network_cgroup_target = &plan.injectors.network_config.network_ebpf_cgroup;
 
         info!(

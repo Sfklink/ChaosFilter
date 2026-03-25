@@ -153,7 +153,6 @@ pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
     }
 
     for injector in injectors.iter_mut() {
-        println!("starting thing here because yes");
         let n = ChaosInjector::name(injector.as_ref());
         injector
             .apply(plan.clone())
@@ -188,8 +187,7 @@ pub fn output_config(
                     interface: Option<&str>,
                     ) -> anyhow::Result<PathBuf> {
     debug!(pid = ?pid, iface = ?interface, force, "init args");
-    // check current directory path because relative sucks and is difficult, but I think this may
-    // not be absolutely necessary, just dont run init as root.
+    // check if current filepath is root, most likely won't be but this is edge-case coverage
     // If it's relative, make it relative to the current working directory.
     let abs_path = if path.is_absolute() {
         path.to_path_buf()
@@ -205,15 +203,11 @@ pub fn output_config(
         );
     }
 
-// yay
     let mut doc: DocumentMut = CONFIG_TEMPLATE
         .parse::<DocumentMut>()
         .context("embedded config template is invalid TOML")?;
 
     // If interface provided: set target_iface + enable network injector
-    // i dont like that targets exists
-    // it annoys me, but do I  want to correct that?
-    // yeah i do because who else will do it
     if let Some(iface) = interface {
         doc["injectors"]["network_config"]["enabled"] = value(true);
         doc["injectors"]["network_config"]["target_iface"] = value(iface);
@@ -222,8 +216,6 @@ pub fn output_config(
 
     }else{
         doc["injectors"]["network_config"]["enabled"] = value(false);
-        doc["injectors"]["network_config"]["target_iface"] = value("default");
-
     }
     // If pid provided: set target_pid + enable memory injector
     if let Some(p) = pid {
@@ -232,9 +224,6 @@ pub fn output_config(
         doc["injectors"]["memory_config"]["enabled"] = value(true);
         info!(pid = p, "memory injector enabled");
     }else {
-        doc["injectors"]["memory_config"]["target_pid"] = value(0);
-        doc["targets"]["cgroup"] = value(0);
-
         doc["injectors"]["memory_config"]["enabled"] = value(false);
     }
 
