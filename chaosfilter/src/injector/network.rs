@@ -6,8 +6,18 @@
 use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::process::{Command, Stdio};
-use crate::injector::ebpf::{attach_classifier, EbpfHandle};
 use tracing::{debug, error, info, warn};
+use aya::{
+    maps::HashMap,
+    programs::{SchedClassifier, TcAttachType},
+    Ebpf,
+};
+use aya_log::EbpfLogger;
+#[rustfmt::skip]
+
+pub struct EbpfHandle {
+    pub(crate) _ebpf: Ebpf,
+}
 
 /// tc netem injector state.
 ///
@@ -27,20 +37,6 @@ pub struct NetworkConfig {
 }
 
 pub type NetworkInjector = NetworkConfig;
-
-/// Summary statistics parsed from `ping` output.
-///
-/// # Notes:
-/// RTT values are in milliseconds. Packet loss is a percentage in the range `0.0..=100.0`.
-#[derive(Debug)]
-pub struct PingStats {
-    pub transmitted: u32,
-    pub received: u32,
-    pub loss_pct: f32,
-    pub rtt_min: f32,
-    pub rtt_avg: f32,
-    pub rtt_max: f32,
-}
 
 impl NetworkConfig {
     /// Prints the current qdisc state for `iface` (best effort).
@@ -441,6 +437,53 @@ impl crate::injector::ChaosInjector for NetworkInjector {
     fn revert(&mut self) -> Result<()> {
         NetworkConfig::revert(self)
     }
+}
+
+
+
+pub fn attach_classifier(iface: &str, cgroups: &[u64]) -> Result<EbpfHandle> {
+    let mut ebpf = Ebpf::load(aya::include_bytes_aligned!(concat!(
+        env!("OUT_DIR"),
+        "/chaosfilter-ebpf"
+    )))
+        .context("failed to load embedded eBPF object")?;
+
+    let _logger = match EbpfLogger::init(&mut ebpf) {
+        Ok(logger) => {
+            log::debug!("[ebpf] logger initialized");
+            Some(logger)
+        }
+        Err(e) => {
+            log::warn!("failed to initialize eBPF logger: {e}");
+            None
+        }
+    };
+
+    {
+        let map = ebpf
+            .map_mut("TARGET_CGROUPS")
+            .context("TARGET_CGROUPS map not found")?;
+
+        let mut targets: HashMap<_, u64, u8> =
+            HashMap::try_from(map).context("failed to open TARGET_CGROUPS")?;
+
+        for id in cgroups {
+            targets.insert(*id, 1, 0)?;
+        }
+    }
+
+    let program: &mut SchedClassifier = ebpf
+        .program_mut("chaosfilter")
+        .context("failed to find eBPF program named `chaosfilter`")?
+        .try_into()
+        .context("failed to cast program to SchedClassifier")?;
+
+    program.load().context("failed to load classifier")?;
+    program.attach(iface, TcAttachType::Egress)?;
+
+    Ok(EbpfHandle {
+        _ebpf: ebpf,
+    })
 }
 
 /// Validates that a network interface exists on the host.
