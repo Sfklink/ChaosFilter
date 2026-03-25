@@ -52,7 +52,7 @@ impl NetworkConfig {
     /// * `iface` - Network interface to inspect.
     ///
     /// # Returns
-    /// This function returns `()`.
+    /// This function returns `()`.`
     ///
     /// # Side Effects
     /// - Writes human-readable output to stdout/stderr.
