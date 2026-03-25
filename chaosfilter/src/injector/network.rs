@@ -36,6 +36,7 @@ pub struct NetworkConfig {
     pub ebpf_handle: Option<EbpfHandle>,
 }
 
+pub type NetworkInjector = NetworkConfig;
 
 impl NetworkConfig {
     /// Prints the current qdisc state for `iface` (best effort).
