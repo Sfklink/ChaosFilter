@@ -1,11 +1,18 @@
 use anyhow::Context;
 
 use chaosfilter::plans::{Plan, RunConfigArgs};
-use chaosfilter::injector::{block_delay, cpu_memory, network};
+
 use chaosfilter::injector::filesystem::FilesystemInjector;
+use chaosfilter::injector::block_delay::BlockDelayInjector;
+use chaosfilter::injector::cpu_memory::MemoryInjector;
+use chaosfilter::injector::filesystem::FilesystemInjector;
+use chaosfilter::injector::network::NetworkInjector;
+use chaosfilter::injector::ChaosInjector;
 
 use chaosfilter::validate::validate_plan;
 use clap::{Parser, Subcommand};
+use std::sync::mpsc;
+use std::time::Duration;
 use std::{fs, path::{Path, PathBuf}};
 use toml_edit::{value, DocumentMut};
 use tracing::{debug, info};
@@ -39,8 +46,7 @@ fn main() {
 ///     - Validates the plan using [`chaosfilter_common::validate_plan`].
 ///
 /// - For [`Commands::Chaos`]:
-///     - Builds a plan via [`RunLikeArgs::plan_from_args`].
-///     - Executes the plan via [`chaosfilter_controller::qdiscs::run_plan`].
+///     - Loads the plan from the config file and runs [`run_plan`] (injectors apply → hold → revert).
 ///
 /// - For ['Commands::Init']
 ///     - Outputs a .toml config file to eprintlnCWD.
@@ -133,17 +139,47 @@ where
 }
 
 pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
-    // Each module should early-return Ok(()) when its injector is disabled.
-    cpu_memory::run_plan(plan)?;
-    network::run_plan(plan)?;
-    block_delay::run(plan)?;
+    let mut injectors: Vec<Box<dyn ChaosInjector>> = Vec::new();
 
-    let mut filesystem_injector = FilesystemInjector::default();
-    filesystem_injector.apply(plan)?;
+    if plan.injectors.memory_config.enabled {
+        injectors.push(Box::new(MemoryInjector::default()));
+    }
+    if plan.injectors.network_config.enabled {
+        injectors.push(Box::new(NetworkInjector::default()));
+    }
+    if plan.injectors.block_config.enabled {
+        injectors.push(Box::new(BlockDelayInjector::default()));
+    }
+    if plan.injectors.filesystem_config.enabled {
+        injectors.push(Box::new(FilesystemInjector::default()));
+    }
 
-    std::thread::sleep(std::time::Duration::from_secs(plan.schedule.duration_s));
+    for injector in injectors.iter_mut() {
+        println!("starting thing here because yes");
+        let n = ChaosInjector::name(injector.as_ref());
+        injector
+            .apply(plan.clone())
+            .with_context(|| format!("apply failed ({n})"))?;
+    }
 
-    filesystem_injector.revert()?;
+    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    ctrlc::set_handler(move || {
+        let _ = stop_tx.send(());
+    })?;
+
+    let hold = Duration::from_secs(plan.schedule.duration_s);
+    match stop_rx.recv_timeout(hold) {
+        Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+        Err(e) => return Err(anyhow::anyhow!("failed while waiting for stop signal: {e}")),
+    }
+
+    for injector in injectors.iter_mut() {
+        let n = ChaosInjector::name(injector.as_ref());
+        injector
+            .revert()
+            .with_context(|| format!("revert failed ({n})"))?;
+    }
+
     Ok(())
 }
 
