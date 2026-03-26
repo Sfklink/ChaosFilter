@@ -10,9 +10,6 @@ use std::process::{Command, Stdio};
 use tracing::debug;
 
 /// Run every enabled injector validator against `plan`.
-///
-/// Cheap (no kernel mutations), fails fast on the first error.
-/// Safe to call before any chaos is applied.
 pub fn validate_plan(plan: &Plan) -> Result<()> {
     let mut errors: Vec<String> = Vec::new();
  
@@ -34,48 +31,6 @@ pub fn validate_plan(plan: &Plan) -> Result<()> {
     } else {
         Err(anyhow!("plan validation failed:\n{}", errors.join("\n")))
     }
-}
-
-/// Validates that a network interface exists on the host.
-///
-/// This function performs a lightweight check using
-/// `ip link show <iface>` to verify that the interface
-/// is present and accessible.
-///
-/// # Arguments
-/// * `iface` - Name of the network interface to validate.
-///
-/// # Returns
-/// Returns `Ok(())` if the interface exists.
-///
-/// # Side Effects
-/// Executes the system command:
-/// - `ip link show <iface>`
-///
-/// # Errors
-/// Returns an error if:
-/// - The `ip` command fails to execute, or
-/// - The interface does not exist.
-///
-/// # Requires
-/// The `ip` command must be available on the system.
-pub fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
-    let Some(iface) = iface else {
-        // iface not specified => nothing to validate here
-        return Ok(());
-    };
-
-    let status = Command::new("ip")
-        .args(["link", "show", iface])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-
-    if !status.success() {
-        return Err(anyhow!("network interface not found: {}", iface));
-    }
-
-    Ok(())
 }
 
 /// Validates the `network_config` section of a [`Plan`].
@@ -114,7 +69,7 @@ pub fn validate_network_config(plan: &Plan) -> Result<()> {
 
 /// Validates the [`FdConfig`][crate::plans::FdConfig] section of a [`Plan`].
 ///
-/// It is recommmedn that you run this before `apply` so you may get a clear 
+/// It is recommended that you run this before `apply` so you may get a clear 
 /// error message instead of a mid-run failure.
 /// # Errors
 /// - `fd_config.enabled = true` but `targets.cgroup` is absent.
@@ -124,6 +79,7 @@ pub fn validate_filesystem_config(plan: &Plan) -> Result<()> {
     let config = &plan.injectors.filesystem_config;
 
     if !config.enabled {
+        debug!("filesystem_config not enabled; skipping");
         return Ok(());
     }
 
@@ -131,9 +87,7 @@ pub fn validate_filesystem_config(plan: &Plan) -> Result<()> {
         anyhow!("filesystem_config.enabled=true requires injectors.filesystem_config.target_pid")
     })?;
 
-    if !Path::new(&format!("/proc/{pid}")).exists() {
-        return Err(anyhow!("PID does not exist: {pid}"));
-    }
+    validate_pid_exists(pid)?;
 
     if config.soft_limit > config.hard_limit {
         return Err(anyhow!(
@@ -159,6 +113,7 @@ pub fn validate_memory_config(plan: &Plan) -> Result<()> {
     let config = &plan.injectors.memory_config;
 
     if !config.enabled {
+        debug!("memory_config not enabled; skipping");
         return Ok(());
     }
 
@@ -166,9 +121,8 @@ pub fn validate_memory_config(plan: &Plan) -> Result<()> {
         anyhow!("memory_config.enabled=true requires injectors.memory_config.target_pid")
     })?;
 
-    if !Path::new(&format!("/proc/{pid}")).exists() {
-        return Err(anyhow!("PID does not exist: {pid}"));
-    }
+    validate_pid_exists(pid)?;
+    validate_cgroup_v2()?;
 
     if !Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
         return Err(anyhow!(
@@ -220,6 +174,42 @@ pub fn validate_block_config(plan: &Plan) -> Result<()> {
         ));
     }
  
+    Ok(())
+}
+
+// Helpers
+fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
+    let Some(iface) = iface else {
+        debug!("iface not provided; skipping");
+        return Ok(());
+    };
+
+    let status = Command::new("ip")
+        .args(["link", "show", iface])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+
+    if !status.success() {
+        return Err(anyhow!("network interface not found: {}", iface));
+    }
+
+    Ok(())
+}
+
+fn validate_pid_exists(pid: u32) -> Result<()> {
+    if !Path::new(&format!("/proc/{pid}")).exists() {
+        return Err(anyhow!("PID does not exist: {pid}"));
+    }
+    Ok(())
+}
+
+fn validate_cgroup_v2() -> Result<()> {
+    if !Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
+        return Err(anyhow!(
+            "cgroup v2 not detected: /sys/fs/cgroup/cgroup.controllers missing"
+        ));
+    }
     Ok(())
 }
 
