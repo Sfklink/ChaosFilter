@@ -6,20 +6,23 @@
 use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::process::{Command, Stdio};
-use aya::Ebpf;
-use aya::maps::HashMap;
-use aya::programs::{SchedClassifier, TcAttachType};
-use aya_log::EbpfLogger;
 use tracing::{debug, error, info, warn};
+use aya::{
+    maps::HashMap,
+    programs::{SchedClassifier, TcAttachType},
+    Ebpf,
+};
+use aya_log::EbpfLogger;
+#[rustfmt::skip]
+
+pub struct EbpfHandle {
+    pub(crate) _ebpf: Ebpf,
+}
 
 
 /// tc netem injector state.
 ///
 /// Tracks whether chaos was applied so `revert` can be idempotent.
-///
-// THIS IS A PROBLEM.
-// Here, we are making the mistake of supplying domain logic to itself internally, we don't like that.
-// It takes in arguments, it does the thing.  Right now, this stinks, and is not testable.
 #[derive(Default)]
 pub struct NetworkConfig {
     applied: bool,
@@ -33,6 +36,9 @@ pub struct NetworkConfig {
 pub struct EbpfHandle {
     _ebpf: Ebpf,
 }
+pub type NetworkInjector = NetworkConfig;
+
+
 
 /// Allows selection for targeted or sys-wide network degradation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -415,167 +421,6 @@ impl NetworkConfig {
 
 
 
-
-
-    // /// Applies `tc netem` according to `plan.injectors.qdisc_netem`.
-    // ///
-    // /// This method updates internal injector state so that [`NetworkConfig::revert`]
-    // /// can undo changes later.
-    // ///
-    // /// # Arguments
-    // /// * `plan` - Chaos plan containing `targets.iface` and netem parameters.
-    // ///
-    // /// # Returns
-    // /// Returns `Ok(())` if the qdisc is applied successfully.
-    // ///
-    // /// # Side Effects
-    // /// - Executes `tc qdisc replace dev <iface> root netem delay <delay> loss <loss>`.
-    // /// - Prints status output to stdout/stderr.
-    // /// - Updates internal state (`applied`, `iface`).
-    // ///
-    // /// # Requires
-    // /// CAP_NET_ADMIN privileges (typically `sudo`).
-    // ///
-    // /// # Errors
-    // /// Returns an error if:
-    // /// - The `tc` command fails to execute, or
-    // /// - `tc` exits non-zero (commonly due to insufficient privileges).
-    // ///
-    // /// # Panics
-    // /// May panic if `plan.targets.iface` is `None` (uses `unwrap()`).
-    // /// Callers should ensure the plan is valid (e.g., via [`validate_plan`]).
-    // pub fn apply(&mut self, plan: &Plan, iface: &str) -> Result<()> {
-    //     let delay_ms = plan.injectors.network_config.delay_ms;
-    //     let loss_percent = plan.injectors.network_config.loss_percent;
-    //     let network_cgroup_target = &plan.injectors.network_config.network_ebpf_cgroup;
-    //
-    //     info!(
-    //         iface,
-    //         delay_ms,
-    //         loss_percent,
-    //         "applying netem qdisc"
-    //         );
-    //
-    //     let delay = format!("{delay_ms}ms");
-    //     let loss = format!("{loss_percent}%");
-    //
-    //     debug!("creating root prio qdisc");
-    //
-    //     let root = Command::new("tc")
-    //         .args([
-    //             "qdisc", "replace", "dev", iface,
-    //             "root", "handle", "1:",
-    //             "prio", "bands", "2",
-    //             "priomap",
-    //             "0","0","0","0",
-    //             "0","0","0","0",
-    //             "0","0","0","0",
-    //             "0","0","0","0",
-    //         ])
-    //         .output()
-    //         .context("failed to execute tc (root prio)")?;
-    //
-    //     debug!("root prio status: {}", root.status);
-    //
-    //     if !root.status.success() {
-    //         error!(
-    //             stderr = %String::from_utf8_lossy(&root.stderr),
-    //             "root prio stderr"
-    //         );
-    //
-    //         if !root_prio_exists(iface)? {
-    //             return Err(anyhow!("tc failed creating prio root qdisc on {}", iface));
-    //         } else {
-    //             debug!("root prio already exists, continuing");
-    //         }
-    //     }
-    //
-    //     debug!(
-    //         "attaching netem; parent=1:2 delay={} loss={}",
-    //         delay, loss
-    //     );
-    //
-    //     let netem = Command::new("tc")
-    //         .args([
-    //             "qdisc", "replace", "dev", iface,
-    //             "parent", "1:2",
-    //             "handle", "20:",
-    //             "netem",
-    //             "delay", &delay,
-    //             "loss", &loss,
-    //         ])
-    //         .output()
-    //         .context("failed to execute tc (netem child)")?;
-    //
-    //     debug!("netem status: {}", netem.status);
-    //
-    //     if !netem.status.success() {
-    //         error!(
-    //             stderr = %String::from_utf8_lossy(&root.stderr),
-    //             "root prio stderr"
-    //         );
-    //         return Err(anyhow!("tc failed applying child netem on {}", iface));
-    //     }
-    //
-    //     Self::show_qdisc_state(iface);
-    //
-    //     if network_cgroup_target.is_empty() {
-    //         debug!("no cgroup targets; installing match-all filter to netem band");
-    //         let filter = Command::new("tc")
-    //             .args([
-    //                 "filter", "add", "dev", iface,
-    //                 "parent", "1:", "protocol", "all",
-    //                 "u32", "match", "u32", "0", "0",
-    //                 "flowid", "1:2",
-    //             ])
-    //             .output()
-    //             .context("failed to execute tc (match-all filter)")?;
-    //
-    //         debug!("filter status: {}", filter.status);
-    //
-    //         if !filter.status.success() {
-    //             error!(stderr = %String::from_utf8_lossy(&filter.stderr), "filter stderr");
-    //             return Err(anyhow!(
-    //                 "tc failed installing match-all filter on {}: {}",
-    //                 iface,
-    //                 String::from_utf8_lossy(&filter.stderr)
-    //             ));
-    //         }
-    //     } else {
-    //         debug!("installing fw filter (mark=1 → 1:2)");
-    //         let filter = Command::new("tc")
-    //             .args([
-    //                 "filter", "replace", "dev", iface,
-    //                 "parent", "1:",
-    //                 "protocol", "all",
-    //                 "prio", "1",
-    //                 "handle", "1",
-    //                 "fw",
-    //                 "flowid", "1:2",
-    //             ])
-    //             .output()
-    //             .context("failed to execute tc (fw filter)")?;
-    //
-    //         debug!("filter status: {}", filter.status);
-    //
-    //         if !filter.status.success() {
-    //             error!(stderr = %String::from_utf8_lossy(&filter.stderr), "filter stderr");
-    //             return Err(anyhow!("tc failed installing fw filter on {}", iface));
-    //         }
-    //
-    //         debug!("calling attach_classifier, attempting to attach ebpf program.");
-    //         let handle = attach_classifier(iface, network_cgroup_target)
-    //             .context("failed to attach eBPF classifier")?;
-    //         self.ebpf_handle = Some(handle);
-    //     }
-    //
-    //     self.applied = true;
-    //     self.iface = Some(iface.to_string());
-    //
-    //     debug!("apply() complete");
-    //
-    //     Ok(())
-    // }
     /// Restores a deterministic baseline root qdisc on `iface`.
     ///
     /// This replaces the current root qdisc with `fq_codel`. It does **not**
@@ -760,17 +605,13 @@ impl crate::injector::ChaosInjector for NetworkInjector {
     }
 
     fn apply(&mut self, plan: Plan) -> Result<()> {
-        let mut iface = plan
-            .targets
-            .iface
+       let iface = plan
+            .injectors
+            .network_config
+            .target_iface
             .as_deref()
-            .ok_or_else(|| anyhow!("targets.iface required for network injector"))?
+            .ok_or_else(|| anyhow!("targets.iface required for ping report"))?
             .to_string();
-
-        if iface == "default" {
-            iface = get_default_iface()
-                .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?;
-        }
 
         NetworkConfig::apply(self, &plan, &iface)
     }
@@ -780,46 +621,49 @@ impl crate::injector::ChaosInjector for NetworkInjector {
     }
 }
 
-/// Validates that a network interface exists on the host.
-///
-/// This function performs a lightweight check using
-/// `ip link show <iface>` to verify that the interface
-/// is present and accessible.
-///
-/// # Arguments
-/// * `iface` - Name of the network interface to validate.
-///
-/// # Returns
-/// Returns `Ok(())` if the interface exists.
-///
-/// # Side Effects
-/// Executes the system command:
-/// - `ip link show <iface>`
-///
-/// # Errors
-/// Returns an error if:
-/// - The `ip` command fails to execute, or
-/// - The interface does not exist.
-///
-/// # Requires
-/// The `ip` command must be available on the system.
-pub fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
-    let Some(iface) = iface else {
-        // iface not specified => nothing to validate here
-        return Ok(());
+pub fn attach_classifier(iface: &str, cgroups: &[u64]) -> Result<EbpfHandle> {
+    let mut ebpf = Ebpf::load(aya::include_bytes_aligned!(concat!(
+        env!("OUT_DIR"),
+        "/chaosfilter-ebpf"
+    )))
+        .context("failed to load embedded eBPF object")?;
+
+    let _logger = match EbpfLogger::init(&mut ebpf) {
+        Ok(logger) => {
+            log::debug!("[ebpf] logger initialized");
+            Some(logger)
+        }
+        Err(e) => {
+            log::warn!("failed to initialize eBPF logger: {e}");
+            None
+        }
     };
 
-    let status = Command::new("ip")
-        .args(["link", "show", iface])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
+    {
+        let map = ebpf
+            .map_mut("TARGET_CGROUPS")
+            .context("TARGET_CGROUPS map not found")?;
 
-    if !status.success() {
-        return Err(anyhow!("network interface not found: {}", iface));
+        let mut targets: HashMap<_, u64, u8> =
+            HashMap::try_from(map).context("failed to open TARGET_CGROUPS")?;
+
+        for id in cgroups {
+            targets.insert(*id, 1, 0)?;
+        }
     }
 
-    Ok(())
+    let program: &mut SchedClassifier = ebpf
+        .program_mut("chaosfilter")
+        .context("failed to find eBPF program named `chaosfilter`")?
+        .try_into()
+        .context("failed to cast program to SchedClassifier")?;
+
+    program.load().context("failed to load classifier")?;
+    program.attach(iface, TcAttachType::Egress)?;
+
+    Ok(EbpfHandle {
+        _ebpf: ebpf,
+    })
 }
 
 fn root_prio_exists(iface: &str) -> Result<bool> {
@@ -857,59 +701,4 @@ pub fn get_default_iface() -> Option<String> {
         .windows(2)
         .find(|w| w[0] == "dev")
         .map(|w| w[1].to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    //wew
-
-    use super::*;
-
-    #[test]
-    fn validate_iface_exists_empty() {
-        validate_iface_exists(None).unwrap();
-    }
-
-    #[test]
-    fn validate_iface_exists_invalid() {
-        let err = validate_iface_exists(Some("test"))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("network interface not found"));
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn validate_iface_exists_success() {
-        // there does exist the change of ip not being available, which can happen
-        // in the case that we are not running as root
-
-        let ip_exists = std::process::Command::new("sh")
-            .args(["-c", "command -v ip >/dev/null 2>&1"])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-
-        if !ip_exists {
-            eprintln!("Skipping test: `ip` not installed");
-            return;
-        }
-
-        let iface = get_default_iface().expect("Could not determine default interface");
-
-        validate_iface_exists(Some(&iface)).unwrap();
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn validate_iface_exists_failure() {
-        std::process::Command::new("sh")
-            .args(["-c", "command -v ip >/dev/null 2>&1"])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-
-        let err = validate_iface_exists(Some("test")).unwrap_err().to_string();
-        assert!(err.contains("network interface not found"))
-    }
 }
