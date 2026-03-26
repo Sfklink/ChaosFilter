@@ -431,8 +431,6 @@ impl crate::injector::ChaosInjector for NetworkInjector {
     }
 }
 
-
-
 pub fn attach_classifier(iface: &str, cgroups: &[u64]) -> Result<EbpfHandle> {
     let mut ebpf = Ebpf::load(aya::include_bytes_aligned!(concat!(
         env!("OUT_DIR"),
@@ -478,48 +476,6 @@ pub fn attach_classifier(iface: &str, cgroups: &[u64]) -> Result<EbpfHandle> {
     })
 }
 
-/// Validates that a network interface exists on the host.
-///
-/// This function performs a lightweight check using
-/// `ip link show <iface>` to verify that the interface
-/// is present and accessible.
-///
-/// # Arguments
-/// * `iface` - Name of the network interface to validate.
-///
-/// # Returns
-/// Returns `Ok(())` if the interface exists.
-///
-/// # Side Effects
-/// Executes the system command:
-/// - `ip link show <iface>`
-///
-/// # Errors
-/// Returns an error if:
-/// - The `ip` command fails to execute, or
-/// - The interface does not exist.
-///
-/// # Requires
-/// The `ip` command must be available on the system.
-pub fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
-    let Some(iface) = iface else {
-        // iface not specified => nothing to validate here
-        return Ok(());
-    };
-
-    let status = Command::new("ip")
-        .args(["link", "show", iface])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-
-    if !status.success() {
-        return Err(anyhow!("network interface not found: {}", iface));
-    }
-
-    Ok(())
-}
-
 fn root_prio_exists(iface: &str) -> Result<bool> {
     let output = Command::new("tc")
         .args(["qdisc", "show", "dev", iface])
@@ -555,59 +511,4 @@ pub fn get_default_iface() -> Option<String> {
         .windows(2)
         .find(|w| w[0] == "dev")
         .map(|w| w[1].to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    //wew
-
-    use super::*;
-
-    #[test]
-    fn validate_iface_exists_empty() {
-        validate_iface_exists(None).unwrap();
-    }
-
-    #[test]
-    fn validate_iface_exists_invalid() {
-        let err = validate_iface_exists(Some("test"))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("network interface not found"));
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn validate_iface_exists_success() {
-        // there does exist the change of ip not being available, which can happen
-        // in the case that we are not running as root 
-
-        let ip_exists = std::process::Command::new("sh")
-            .args(["-c", "command -v ip >/dev/null 2>&1"])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-
-        if !ip_exists {
-            eprintln!("Skipping test: `ip` not installed");
-            return;
-        }
-
-        let iface = get_default_iface().expect("Could not determine default interface");
-
-        validate_iface_exists(Some(&iface)).unwrap();
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn validate_iface_exists_failure() {
-        std::process::Command::new("sh")
-            .args(["-c", "command -v ip >/dev/null 2>&1"])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-
-        let err = validate_iface_exists(Some("test")).unwrap_err().to_string();
-        assert!(err.contains("network interface not found"))
-    }
 }

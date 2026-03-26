@@ -16,7 +16,7 @@
 //! nothing that the kernel *doesn't* automatically kill the process, but any
 //! code that doesn't handle `EMFILE` will crash or malfunction.
 
-use crate::plans::Plan;
+use crate::{plans::Plan, validate::validate_filesystem_config};
 use anyhow::{anyhow, Result, Context};
 use libc::{self, rlimit64, RLIMIT_NOFILE};
 use std::{fs, path::{Path, PathBuf}};
@@ -36,44 +36,6 @@ pub struct FilesystemInjector {
     saved: Vec<SavedLimitConfig>
 }
 
-/*
-TODO:
-    Create validate.rs, and move validation functions there. 
- */
-/// Validates the [`FdConfig`][crate::plans::FdConfig] section of a [`Plan`].
-///
-/// It is recommmedn that you run this before `apply` so you may get a clear 
-/// error message instead of a mid-run failure.
-/// # Errors
-/// - `fd_config.enabled = true` but `targets.cgroup` is absent.
-/// - The resolved cgroup directory doesn't exist.
-/// - `soft_limit > hard_limit` (kernel would reject this anyway)
-pub fn validate_fd_config(plan: &Plan) -> Result<()> {
-    let config = &plan.injectors.filesystem_config;
-
-    if !config.enabled {
-        return Ok(());
-    }
-
-    let pid = config.target_pid.ok_or_else(|| {
-        anyhow!("filesystem_config.enabled=true requires injectors.filesystem_config.target_pid")
-    })?;
-
-    if !Path::new(&format!("/proc/{pid}")).exists() {
-        return Err(anyhow!("PID does not exist: {pid}"));
-    }
-
-    if config.soft_limit > config.hard_limit {
-        return Err(anyhow!(
-            "filesystem_config.soft_limit ({}) must be <= filesystem_config.hard_limit ({})",
-            config.soft_limit,
-            config.hard_limit
-        ));
-    }
-
-    Ok(())
-}
-
 impl FilesystemInjector {
     /// Apply reduced `RLIMIT_NOFILE` to every PID in the target cgroup
     ///
@@ -85,8 +47,7 @@ impl FilesystemInjector {
             return Ok(());
         }
 
-        validate_fd_config(plan)?;
-
+        validate_filesystem_config(plan)?;
 
         // target cgroup required if enabled
         let cg_rel = plan
@@ -369,63 +330,6 @@ mod tests {
         assert_eq!(restored_hard, original_hard);
     }
 
-    #[test]
-    fn validate_fd_config_ok_disabled() {
-        let plan = base_plan();
-        validate_fd_config(&plan).unwrap();
-    }
-
-    #[test]
-    fn validate_fd_config_error_enabled_no_pid() {
-        let mut plan = base_plan();
-
-        plan.injectors.filesystem_config.enabled = true;
-        plan.injectors.filesystem_config.target_pid = None;
-        plan.injectors.filesystem_config.soft_limit = 64;
-        plan.injectors.filesystem_config.hard_limit = 64;
-
-        let err = validate_fd_config(&plan).unwrap_err().to_string();
-        assert!(err.contains("requires injectors.filesystem_config.target_pid")
-            || err.contains("requires")
-            || err.contains("target_pid"));
-    }
-
-    #[test]
-    fn validate_fd_config_error_pid_missing() {
-        let mut plan = base_plan();
-
-        plan.injectors.filesystem_config.enabled = true;
-        plan.injectors.filesystem_config.target_pid = Some(4_000_000_000u32);
-        plan.injectors.filesystem_config.soft_limit = 64;
-        plan.injectors.filesystem_config.hard_limit = 64;
-
-        let err = validate_fd_config(&plan).unwrap_err().to_string();
-        assert!(err.contains("PID does not exist") || err.contains("does not exist"));
-    }
-
-    #[test]
-    fn validate_fd_config_error_soft_greater_than_hard() {
-        let mut plan = base_plan();
-
-        plan.injectors.filesystem_config.enabled = true;
-        plan.injectors.filesystem_config.target_pid = Some(std::process::id());
-        plan.injectors.filesystem_config.soft_limit = 200;
-        plan.injectors.filesystem_config.hard_limit = 100;
-
-        let err = validate_fd_config(&plan).unwrap_err().to_string();
-        assert!(err.contains("soft_limit") && err.contains("hard_limit"));
-    }
-    #[test]
-    fn validate_fd_config_ok() {
-        let mut plan = base_plan();
-
-        plan.injectors.filesystem_config.enabled = true;
-        plan.injectors.filesystem_config.target_pid = Some(std::process::id());
-        plan.injectors.filesystem_config.soft_limit = 64;
-        plan.injectors.filesystem_config.hard_limit = 64;
-
-        validate_fd_config(&plan).unwrap();
-    }
     #[test]
     fn not_applied_when_disabled() {
         let mut injector = FilesystemInjector::default();
