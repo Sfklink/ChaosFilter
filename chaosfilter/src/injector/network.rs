@@ -33,9 +33,6 @@ pub struct NetworkConfig {
     pub ebpf_handle: Option<EbpfHandle>,
 }
 
-pub struct EbpfHandle {
-    _ebpf: Ebpf,
-}
 pub type NetworkInjector = NetworkConfig;
 
 
