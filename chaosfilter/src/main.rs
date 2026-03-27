@@ -179,11 +179,11 @@ pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
 }
 
 pub fn output_config(
-                    path: &Path,
-                    force: bool,
-                    pid: Option<u32>,
-                    interface: Option<&str>,
-                    ) -> anyhow::Result<PathBuf> {
+    path: &Path,
+    force: bool,
+    pid: Option<u32>,
+    interface: Option<&str>,
+) -> anyhow::Result<PathBuf> {
     debug!(pid = ?pid, iface = ?interface, force, "init args");
     // check if current filepath is root, most likely won't be but this is edge-case coverage
     // If it's relative, make it relative to the current working directory.
