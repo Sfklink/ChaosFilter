@@ -6,43 +6,106 @@
 use crate::plans::Plan;
 use anyhow::{Context, Result, anyhow};
 use std::process::{Command, Stdio};
-use crate::injector::ebpf::{attach_classifier, EbpfHandle};
 use tracing::{debug, error, info, warn};
+use aya::{
+    maps::HashMap,
+    programs::{SchedClassifier, TcAttachType},
+    Ebpf,
+};
+use aya_log::EbpfLogger;
+#[rustfmt::skip]
+
+pub struct EbpfHandle {
+    pub(crate) _ebpf: Ebpf,
+}
+
 
 /// tc netem injector state.
 ///
 /// Tracks whether chaos was applied so `revert` can be idempotent.
-///
-// THIS IS A PROBLEM.
-// Here, we are making the mistake of supplying domain logic to itself internally, we don't like that.
-// It takes in arguments, it does the thing.  Right now, this stinks, and is not testable.
 #[derive(Default)]
 pub struct NetworkConfig {
     applied: bool,
     iface: Option<String>,
     pub duration_s: u64,
     pub netem_delay_ms: i32,
-    pub netem_loss_percent: f64,
+    pub netem_loss_percent: f32,
     pub ebpf_handle: Option<EbpfHandle>,
 }
 
 pub type NetworkInjector = NetworkConfig;
 
-/// Summary statistics parsed from `ping` output.
-///
-/// # Notes:
-/// RTT values are in milliseconds. Packet loss is a percentage in the range `0.0..=100.0`.
-#[derive(Debug)]
-pub struct PingStats {
-    pub transmitted: u32,
-    pub received: u32,
-    pub loss_pct: f32,
-    pub rtt_min: f32,
-    pub rtt_avg: f32,
-    pub rtt_max: f32,
-}
 
+
+/// Allows selection for targeted or sys-wide network degradation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FilterMode {
+    /// Route all traffic into the `netem` band using a match-all filter.
+    MatchAll,
+    /// Route only eBPF-marked traffic into the `netem` band.
+    EbpfMarked,
+}
 impl NetworkConfig {
+    /// Applies the configured network chaos plan to the target interface.
+    ///
+    /// This method orchestrates qdisc creation, filter installation, and optional
+    /// eBPF classifier attachment for cgroup-based packet selection.
+    ///
+    /// # Arguments
+    /// * `plan` - The validated chaos plan containing network injector settings.
+    /// * `iface` - The resolved network interface name to modify.
+    ///
+    /// # Returns
+    /// Returns `Ok(())` if the network chaos configuration is applied successfully.
+    ///
+    /// # Side Effects
+    /// - Creates or verifies a root `prio` qdisc on `iface`.
+    /// - Attaches a child `netem` qdisc at band `1:2`.
+    /// - Installs either a match-all or firewall-mark-based filter.
+    /// - May attach an eBPF classifier when cgroup targets are configured.
+    /// - Updates internal injector state for later revert.
+    ///
+    /// # Requires
+    /// CAP_NET_ADMIN privileges are typically required.
+    ///
+    /// # Errors
+    /// Returns an error if any required `tc` command fails, if qdisc creation fails,
+    /// or if the optional eBPF classifier cannot be attached.
+    pub fn apply(&mut self, plan: &Plan, iface: &str) -> Result<()> {
+        let delay_ms = plan.injectors.network_config.delay_ms;
+        let loss_percent = plan.injectors.network_config.loss_percent;
+        let network_cgroup_target = &plan.injectors.network_config.network_ebpf_cgroup;
+
+        info!(
+            iface,
+            delay_ms,
+            loss_percent,
+            "applying netem qdisc"
+            );
+        Self::ensure_root_prio_qdisc(iface)?;
+        Self::ensure_child_netem_qdisc(iface, delay_ms, loss_percent)?;
+        Self::show_qdisc_state(iface);
+
+        match Self::select_filter_mode(network_cgroup_target) {
+            FilterMode::MatchAll => {
+                Self::install_match_all_filter(iface)?;
+            }
+            FilterMode::EbpfMarked => {
+                Self::install_fw_filter(iface)?;
+                let handle = Self::attach_classifier(iface, network_cgroup_target)?;
+                self.ebpf_handle = Some(handle);
+            }
+        }
+
+        self.mark_apply_success(iface);
+
+        debug!("apply() complete");
+        Ok(())
+    }
+
+
+
+
     /// Prints the current qdisc state for `iface` (best effort).
     ///
     /// This helper is intentionally non-fatal: failures are logged as warnings
@@ -78,50 +141,30 @@ impl NetworkConfig {
         }
     }
 
-    /// Applies `tc netem` according to `plan.injectors.qdisc_netem`.
+
+    /// Ensures that the root `prio` qdisc exists on the target interface.
     ///
-    /// This method updates internal injector state so that [`NetworkConfig::revert`]
-    /// can undo changes later.
+    /// This creates or replaces a root `prio` qdisc with two bands and a flat
+    /// priomap suitable for directing selected traffic into band `1:2`.
+    ///
+    /// If the initial `tc qdisc replace` command exits non-zero, this function
+    /// performs a follow-up existence check and allows execution to continue when
+    /// the desired root qdisc is already present.
     ///
     /// # Arguments
-    /// * `plan` - Chaos plan containing `targets.iface` and netem parameters.
+    /// * `iface` - Network interface to modify.
     ///
     /// # Returns
-    /// Returns `Ok(())` if the qdisc is applied successfully.
+    /// Returns `Ok(())` if the root `prio` qdisc exists after this function
+    /// completes.
     ///
     /// # Side Effects
-    /// - Executes `tc qdisc replace dev <iface> root netem delay <delay> loss <loss>`.
-    /// - Prints status output to stdout/stderr.
-    /// - Updates internal state (`applied`, `iface`).
-    ///
-    /// # Requires
-    /// CAP_NET_ADMIN privileges (typically `sudo`).
+    /// Modifies root traffic-control state on `iface`.
     ///
     /// # Errors
-    /// Returns an error if:
-    /// - The `tc` command fails to execute, or
-    /// - `tc` exits non-zero (commonly due to insufficient privileges).
-    ///
-    /// # Panics
-    /// May panic if `plan.targets.iface` is `None` (uses `unwrap()`).
-    /// Callers should ensure the plan is valid (e.g., via [`validate_plan`]).
-    pub fn apply(&mut self, plan: &Plan, iface: &str) -> Result<()> {
-        let delay_ms = plan.injectors.network_config.delay_ms;
-        let loss_percent = plan.injectors.network_config.loss_percent;
-
-        // This is new
-        let network_cgroup_target = &plan.injectors.network_config.network_ebpf_cgroup;
-
-        info!(
-            iface,
-            delay_ms,
-            loss_percent,
-            "applying netem qdisc"
-            );
-
-        let delay = format!("{delay_ms}ms");
-        let loss = format!("{loss_percent}%");
-
+    /// Returns an error if the `tc` command fails to execute or if the root `prio`
+    /// qdisc cannot be verified after a failed replace attempt.
+    fn ensure_root_prio_qdisc(iface: &str) -> Result<()> {
         debug!("creating root prio qdisc");
 
         let root = Command::new("tc")
@@ -142,21 +185,46 @@ impl NetworkConfig {
 
         if !root.status.success() {
             error!(
-                stderr = %String::from_utf8_lossy(&root.stderr),
-                "root prio stderr"
-            );
+            stderr = %String::from_utf8_lossy(&root.stderr),
+            "root prio stderr"
+        );
 
             if !root_prio_exists(iface)? {
                 return Err(anyhow!("tc failed creating prio root qdisc on {}", iface));
-            } else {
-                debug!("root prio already exists, continuing");
             }
+
+            debug!("root prio already exists, continuing");
         }
 
+        Ok(())
+    }
+
+    /// Ensures that a child `netem` qdisc is attached beneath the root `prio` qdisc.
+    ///
+    /// The child qdisc is attached at parent `1:2` and configured with the supplied
+    /// delay and loss parameters.
+    ///
+    /// # Arguments
+    /// * `iface` - Network interface to modify.
+    /// * `delay_ms` - Delay to inject, in milliseconds.
+    /// * `loss_percent` - Packet loss percentage to inject.
+    ///
+    /// # Returns
+    /// Returns `Ok(())` if the child `netem` qdisc is applied successfully.
+    ///
+    /// # Side Effects
+    /// Modifies child traffic-control state on `iface`.
+    ///
+    /// # Errors
+    /// Returns an error if the `tc` command fails to execute or exits unsuccessfully.
+    fn ensure_child_netem_qdisc(iface: &str, delay_ms: u32, loss_percent: f32) -> Result<()> {
+        let delay = format!("{delay_ms}ms");
+        let loss = format!("{loss_percent}%");
+
         debug!(
-            "attaching netem; parent=1:2 delay={} loss={}",
-            delay, loss
-        );
+        "attaching netem; parent=1:2 delay={} loss={}",
+        delay, loss
+    );
 
         let netem = Command::new("tc")
             .args([
@@ -174,71 +242,182 @@ impl NetworkConfig {
 
         if !netem.status.success() {
             error!(
-                stderr = %String::from_utf8_lossy(&root.stderr),
-                "root prio stderr"
-            );
+            stderr = %String::from_utf8_lossy(&netem.stderr),
+            "netem stderr"
+        );
             return Err(anyhow!("tc failed applying child netem on {}", iface));
         }
 
-        Self::show_qdisc_state(iface);
-
+        Ok(())
+    }
+    /// Selects the traffic-steering strategy for the current configuration.
+    ///
+    /// When no cgroup targets are configured, all traffic is routed into the
+    /// `netem` band using a match-all filter. When one or more cgroup targets are
+    /// present, a firewall-mark-based filter is installed and an eBPF classifier is
+    /// expected to mark matching packets.
+    ///
+    /// # Arguments
+    /// * `network_cgroup_target` - Configured cgroup targets for eBPF-based selection.
+    ///
+    /// # Returns
+    /// A [`FilterMode`] describing how traffic should be routed.
+    ///
+    /// # Notes
+    /// This function is pure and well suited to unit testing.
+    fn select_filter_mode(network_cgroup_target: &Vec<u64>) -> FilterMode {
         if network_cgroup_target.is_empty() {
-            debug!("no cgroup targets; installing match-all filter to netem band");
-            let filter = Command::new("tc")
-                .args([
-                    "filter", "add", "dev", iface,
-                    "parent", "1:", "protocol", "all",
-                    "u32", "match", "u32", "0", "0",
-                    "flowid", "1:2",
-                ])
-                .output()
-                .context("failed to execute tc (match-all filter)")?;
- 
-            debug!("filter status: {}", filter.status);
- 
-            if !filter.status.success() {
-                error!(stderr = %String::from_utf8_lossy(&filter.stderr), "filter stderr");
-                return Err(anyhow!(
-                    "tc failed installing match-all filter on {}: {}",
-                    iface,
-                    String::from_utf8_lossy(&filter.stderr)
-                ));
-            }
+            FilterMode::MatchAll
         } else {
-            debug!("installing fw filter (mark=1 → 1:2)");
-            let filter = Command::new("tc")
-                .args([
-                    "filter", "replace", "dev", iface,
-                    "parent", "1:",
-                    "protocol", "all",
-                    "prio", "1",
-                    "handle", "1",
-                    "fw",
-                    "flowid", "1:2",
-                ])
-                .output()
-                .context("failed to execute tc (fw filter)")?;
- 
-            debug!("filter status: {}", filter.status);
- 
-            if !filter.status.success() {
-                error!(stderr = %String::from_utf8_lossy(&filter.stderr), "filter stderr");
-                return Err(anyhow!("tc failed installing fw filter on {}", iface));
-            }
- 
-            debug!("calling attach_classifier, attempting to attach ebpf program.");
-            let handle = attach_classifier(iface, network_cgroup_target)
-                .context("failed to attach eBPF classifier")?;
-            self.ebpf_handle = Some(handle);
+            FilterMode::EbpfMarked
         }
+    }
+    /// Installs a match-all filter that directs all traffic into band `1:2`.
+    ///
+    /// This mode is used when no cgroup-specific eBPF targeting is configured.
+    ///
+    /// # Arguments
+    /// * `iface` - Network interface to modify.
+    ///
+    /// # Returns
+    /// Returns `Ok(())` if the filter is installed successfully.
+    ///
+    /// # Side Effects
+    /// Adds a traffic-control filter to `iface`.
+    ///
+    /// # Errors
+    /// Returns an error if the `tc filter add` command fails or exits non-zero.
+    fn install_match_all_filter(iface: &str) -> Result<()> {
+        debug!("no cgroup targets; installing match-all filter to netem band");
 
-        self.applied = true;
-        self.iface = Some(iface.to_string());
+        let filter = Command::new("tc")
+            .args([
+                "filter", "add", "dev", iface,
+                "parent", "1:", "protocol", "all",
+                "u32", "match", "u32", "0", "0",
+                "flowid", "1:2",
+            ])
+            .output()
+            .context("failed to execute tc (match-all filter)")?;
 
-        debug!("apply() complete");
+        debug!("filter status: {}", filter.status);
+
+        if !filter.status.success() {
+            error!(stderr = %String::from_utf8_lossy(&filter.stderr), "filter stderr");
+            return Err(anyhow!(
+            "tc failed installing match-all filter on {}: {}",
+            iface,
+            String::from_utf8_lossy(&filter.stderr)
+        ));
+        }
 
         Ok(())
     }
+
+    /// Installs a firewall-mark-based filter that routes marked packets into band `1:2`.
+    ///
+    /// This mode is used when an eBPF classifier is responsible for marking only
+    /// selected packets, such as traffic originating from configured cgroup targets.
+    ///
+    /// # Arguments
+    /// * `iface` - Network interface to modify.
+    ///
+    /// # Returns
+    /// Returns `Ok(())` if the firewall-mark-based filter is installed successfully.
+    ///
+    /// # Side Effects
+    /// Adds or replaces a traffic-control filter on `iface`.
+    ///
+    /// # Errors
+    /// Returns an error if the `tc filter replace` command fails or exits non-zero.
+    fn install_fw_filter(iface: &str) -> Result<()> {
+        debug!("installing fw filter (mark=1 → 1:2)");
+
+        let filter = Command::new("tc")
+            .args([
+                "filter", "replace", "dev", iface,
+                "parent", "1:",
+                "protocol", "all",
+                "prio", "1",
+                "handle", "1",
+                "fw",
+                "flowid", "1:2",
+            ])
+            .output()
+            .context("failed to execute tc (fw filter)")?;
+
+        debug!("filter status: {}", filter.status);
+
+        if !filter.status.success() {
+            error!(stderr = %String::from_utf8_lossy(&filter.stderr), "filter stderr");
+            return Err(anyhow!("tc failed installing fw filter on {}", iface));
+        }
+
+        Ok(())
+    }
+
+
+    pub fn attach_classifier(iface: &str, cgroups: &[u64]) -> Result<EbpfHandle> {
+        let mut ebpf = Ebpf::load(aya::include_bytes_aligned!(concat!(
+        env!("OUT_DIR"),
+        "/chaosfilter-ebpf"
+    )))
+            .context("failed to load embedded eBPF object")?;
+
+        let _logger = match EbpfLogger::init(&mut ebpf) {
+            Ok(logger) => {
+                log::debug!("[ebpf] logger initialized");
+                Some(logger)
+            }
+            Err(e) => {
+                log::warn!("failed to initialize eBPF logger: {e}");
+                None
+            }
+        };
+
+        {
+            let map = ebpf
+                .map_mut("TARGET_CGROUPS")
+                .context("TARGET_CGROUPS map not found")?;
+
+            let mut targets: HashMap<_, u64, u8> =
+                HashMap::try_from(map).context("failed to open TARGET_CGROUPS")?;
+
+            for id in cgroups {
+                targets.insert(*id, 1, 0)?;
+            }
+        }
+
+        let program: &mut SchedClassifier = ebpf
+            .program_mut("chaosfilter")
+            .context("failed to find eBPF program named `chaosfilter`")?
+            .try_into()
+            .context("failed to cast program to SchedClassifier")?;
+
+        program.load().context("failed to load classifier")?;
+        program.attach(iface, TcAttachType::Egress)?;
+
+        Ok(EbpfHandle {
+            _ebpf: ebpf,
+        })
+    }
+
+
+    /// Records successful apply state for later revert.
+    ///
+    /// # Arguments
+    /// * `iface` - Network interface that was successfully modified.
+    ///
+    /// # Side Effects
+    /// Updates internal injector state so that [`NetworkConfig::revert`] can safely
+    /// restore the interface later.
+    fn mark_apply_success(&mut self, iface: &str) {
+        self.applied = true;
+        self.iface = Some(iface.to_string());
+    }
+
+
+
     /// Restores a deterministic baseline root qdisc on `iface`.
     ///
     /// This replaces the current root qdisc with `fq_codel`. It does **not**
@@ -423,17 +602,13 @@ impl crate::injector::ChaosInjector for NetworkInjector {
     }
 
     fn apply(&mut self, plan: Plan) -> Result<()> {
-        let mut iface = plan
-            .targets
-            .iface
+       let iface = plan
+            .injectors
+            .network_config
+            .target_iface
             .as_deref()
-            .ok_or_else(|| anyhow!("targets.iface required for network injector"))?
+            .ok_or_else(|| anyhow!("targets.iface required for ping report"))?
             .to_string();
-
-        if iface == "default" {
-            iface = get_default_iface()
-                .ok_or_else(|| anyhow!("could not determine default interface via `ip route get`"))?;
-        }
 
         NetworkConfig::apply(self, &plan, &iface)
     }
@@ -443,46 +618,49 @@ impl crate::injector::ChaosInjector for NetworkInjector {
     }
 }
 
-/// Validates that a network interface exists on the host.
-///
-/// This function performs a lightweight check using
-/// `ip link show <iface>` to verify that the interface
-/// is present and accessible.
-///
-/// # Arguments
-/// * `iface` - Name of the network interface to validate.
-///
-/// # Returns
-/// Returns `Ok(())` if the interface exists.
-///
-/// # Side Effects
-/// Executes the system command:
-/// - `ip link show <iface>`
-///
-/// # Errors
-/// Returns an error if:
-/// - The `ip` command fails to execute, or
-/// - The interface does not exist.
-///
-/// # Requires
-/// The `ip` command must be available on the system.
-pub fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
-    let Some(iface) = iface else {
-        // iface not specified => nothing to validate here
-        return Ok(());
+pub fn attach_classifier(iface: &str, cgroups: &[u64]) -> Result<EbpfHandle> {
+    let mut ebpf = Ebpf::load(aya::include_bytes_aligned!(concat!(
+        env!("OUT_DIR"),
+        "/chaosfilter-ebpf"
+    )))
+        .context("failed to load embedded eBPF object")?;
+
+    let _logger = match EbpfLogger::init(&mut ebpf) {
+        Ok(logger) => {
+            log::debug!("[ebpf] logger initialized");
+            Some(logger)
+        }
+        Err(e) => {
+            log::warn!("failed to initialize eBPF logger: {e}");
+            None
+        }
     };
 
-    let status = Command::new("ip")
-        .args(["link", "show", iface])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
+    {
+        let map = ebpf
+            .map_mut("TARGET_CGROUPS")
+            .context("TARGET_CGROUPS map not found")?;
 
-    if !status.success() {
-        return Err(anyhow!("network interface not found: {}", iface));
+        let mut targets: HashMap<_, u64, u8> =
+            HashMap::try_from(map).context("failed to open TARGET_CGROUPS")?;
+
+        for id in cgroups {
+            targets.insert(*id, 1, 0)?;
+        }
     }
 
-    Ok(())
+    let program: &mut SchedClassifier = ebpf
+        .program_mut("chaosfilter")
+        .context("failed to find eBPF program named `chaosfilter`")?
+        .try_into()
+        .context("failed to cast program to SchedClassifier")?;
+
+    program.load().context("failed to load classifier")?;
+    program.attach(iface, TcAttachType::Egress)?;
+
+    Ok(EbpfHandle {
+        _ebpf: ebpf,
+    })
 }
 
 fn root_prio_exists(iface: &str) -> Result<bool> {
@@ -520,59 +698,4 @@ pub fn get_default_iface() -> Option<String> {
         .windows(2)
         .find(|w| w[0] == "dev")
         .map(|w| w[1].to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    //wew
-
-    use super::*;
-
-    #[test]
-    fn validate_iface_exists_empty() {
-        validate_iface_exists(None).unwrap();
-    }
-
-    #[test]
-    fn validate_iface_exists_invalid() {
-        let err = validate_iface_exists(Some("test"))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("network interface not found"));
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn validate_iface_exists_success() {
-        // there does exist the change of ip not being available, which can happen
-        // in the case that we are not running as root
-
-        let ip_exists = std::process::Command::new("sh")
-            .args(["-c", "command -v ip >/dev/null 2>&1"])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-
-        if !ip_exists {
-            eprintln!("Skipping test: `ip` not installed");
-            return;
-        }
-
-        let iface = get_default_iface().expect("Could not determine default interface");
-
-        validate_iface_exists(Some(&iface)).unwrap();
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn validate_iface_exists_failure() {
-        std::process::Command::new("sh")
-            .args(["-c", "command -v ip >/dev/null 2>&1"])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-
-        let err = validate_iface_exists(Some("test")).unwrap_err().to_string();
-        assert!(err.contains("network interface not found"))
-    }
 }

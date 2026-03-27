@@ -1,5 +1,6 @@
 use crate::injector::ChaosInjector;
 use crate::plans::Plan;
+use crate::validate::validate_block_config;
 use anyhow::{bail, Result};
 use std::fs;
 use std::io::Write;
@@ -22,24 +23,6 @@ fn major_minor(device_path: &str) -> Result<String> {
     let minor = libc::minor(rdev);
 
     Ok(format!("{}:{}", major, minor))
-}
-
-// make sure stuff is enabled so you dont have to redo the manual setup after a reboot
-fn io_enabled() -> Result<()> {
-    let root_subtree = Path::new("/sys/fs/cgroup/cgroup.subtree_control");
-    let subtree = fs::read_to_string(root_subtree)?;
-
-    if !subtree.contains("io") {
-        warn!(
-            subtree_path = %root_subtree.display(),
-            "IO controller is not enabled; run: sudo sh -c 'echo +io > {}'",
-            root_subtree.display()
-        );
-
-        bail!("IO controller not enabled");
-    }
-
-    Ok(())
 }
 
 // simple disk speed test (control vs experimental)
@@ -87,7 +70,7 @@ impl ChaosInjector for BlockDelayInjector {
     fn apply(&mut self, plan: Plan) -> Result<()> {
         let cfg = &plan.injectors.block_config;
 
-        io_enabled()?;
+        validate_block_config(&plan)?;
 
         let device = cfg.device.as_ref().expect("Device must be specified");
         let mm = major_minor(device)?;

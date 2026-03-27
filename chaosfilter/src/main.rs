@@ -1,12 +1,12 @@
 use anyhow::Context;
-
 use chaosfilter::plans::{Plan, RunConfigArgs};
 use chaosfilter::injector::block_delay::BlockDelayInjector;
-use chaosfilter::injector::cpu_memory::{validate_memory_config, MemoryInjector};
-use chaosfilter::injector::filesystem::{validate_fd_config, FilesystemInjector};
-use chaosfilter::injector::network::{validate_iface_exists, NetworkInjector};
+use chaosfilter::injector::cpu_memory::MemoryInjector;
+use chaosfilter::injector::filesystem::FilesystemInjector;
+use chaosfilter::injector::network::NetworkInjector;
 use chaosfilter::injector::ChaosInjector;
 
+use chaosfilter::validate::validate_plan;
 use clap::{Parser, Subcommand};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -91,9 +91,7 @@ where
     match cli.command {
         Commands::Validate(args) => {
             let plan = Plan::load_from_toml_file(&args.config)?;
-            validate_memory_config(&plan)?;
-            validate_iface_exists(plan.targets.iface.as_deref())?;
-            validate_fd_config(&plan)?;
+            validate_plan(&plan)?;
 
             println!("\nConfig OK.");
             Ok(())
@@ -153,7 +151,6 @@ pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
     }
 
     for injector in injectors.iter_mut() {
-        println!("starting thing here because yes");
         let n = ChaosInjector::name(injector.as_ref());
         injector
             .apply(plan.clone())
@@ -188,8 +185,7 @@ pub fn output_config(
                     interface: Option<&str>,
                     ) -> anyhow::Result<PathBuf> {
     debug!(pid = ?pid, iface = ?interface, force, "init args");
-    // check current directory path because relative sucks and is difficult, but I think this may
-    // not be absolutely necessary, just dont run init as root.
+    // check if current filepath is root, most likely won't be but this is edge-case coverage
     // If it's relative, make it relative to the current working directory.
     let abs_path = if path.is_absolute() {
         path.to_path_buf()
@@ -205,29 +201,19 @@ pub fn output_config(
         );
     }
 
-// yay
     let mut doc: DocumentMut = CONFIG_TEMPLATE
         .parse::<DocumentMut>()
         .context("embedded config template is invalid TOML")?;
 
     // If interface provided: set target_iface + enable network injector
-    // i dont like that targets exists
-    // it annoys me, but do I  want to correct that?
-    // yeah i do because who else will do it
     if let Some(iface) = interface {
         doc["injectors"]["network_config"]["enabled"] = value(true);
         doc["injectors"]["network_config"]["target_iface"] = value(iface);
         info!(iface, "network injector enabled");
         // set iface
-        if doc["targets"]["iface"].is_none() {
-            doc["targets"]["iface"] = value(iface);
-        } else {
-            doc["targets"]["iface"] = value(iface);
-        }
+
     }else{
         doc["injectors"]["network_config"]["enabled"] = value(false);
-        doc["injectors"]["network_config"]["target_iface"] = value("default");
-
     }
     // If pid provided: set target_pid + enable memory injector
     if let Some(p) = pid {
@@ -365,15 +351,17 @@ mod test {
         let toml = r#"
             name = "test-config"
 
-            [targets]
-            iface = "enp5s0"
-            cgroup = "test-cgroup"
+            [injectors]
+
+            [injectors.memory_config]
+            target_pid = 123
+
+            [injectors.network_config]
+            target_iface = "enp5s0"
 
             [schedule]
             duration_s = 1
             "#;
-
-        // Injectors were left out here to verify #[serde(default)]
 
         let mut file = NamedTempFile::new().unwrap();
         write!(file, "{toml}").unwrap();
@@ -381,8 +369,8 @@ mod test {
         let plan = Plan::load_from_toml_file(file.path()).unwrap();
 
         assert_eq!(plan.name, "test-config");
-        assert_eq!(plan.targets.cgroup.as_deref(), Some("test-cgroup"));
-        assert_eq!(plan.targets.iface.as_deref(), Some("enp5s0"));
+        assert_eq!(plan.injectors.memory_config.target_pid, Some(123));
+        assert_eq!(plan.injectors.network_config.target_iface.as_deref(), Some("enp5s0"));
         assert_eq!(plan.schedule.duration_s, 1);
 
         // Verify defaults
@@ -405,9 +393,12 @@ mod test {
 
             [injectors.network_config]
             enabled = true
+            target_iface = "enp5s0"
 
             [injectors.memory_config]
             enabled = true
+            target_pid = 123
+
             "#;
 
         let mut file = NamedTempFile::new().unwrap();
@@ -416,8 +407,8 @@ mod test {
         let plan = Plan::load_from_toml_file(file.path()).unwrap();
 
         assert_eq!(plan.name, "test-config");
-        assert_eq!(plan.targets.cgroup.as_deref(), Some("test-cgroup"));
-        assert_eq!(plan.targets.iface.as_deref(), Some("enp5s0"));
+        assert_eq!(plan.injectors.network_config.target_iface.as_deref(), Some("enp5s0"));
+        assert_eq!(plan.injectors.memory_config.target_pid, Some(123));
         assert_eq!(plan.schedule.duration_s, 1);
         assert_eq!(plan.injectors.network_config.enabled, true);
         assert_eq!(plan.injectors.memory_config.enabled, true);

@@ -15,21 +15,6 @@
 name = "example-plan"
 
 # --------------------------------------------------
-# Targets
-# --------------------------------------------------
-
-[targets]
-# Network interface to target (e.g. eth0, enp5s0, vethA)
-# Can set to "default" to select the current system default
-# network interface.
-iface = "default"
-
-# Optional: cgroup path relative to /sys/fs/cgroup (cgroup v2)
-# Example: "77500" or "system.slice/my.service"
-
-cgroup = "0"
-
-# --------------------------------------------------
 # Schedule
 # --------------------------------------------------
 
@@ -47,18 +32,20 @@ duration_s = 10
 [injectors.network_config]
 enabled = false
 
-# Optional override (defaults to targets.iface)
-# target_iface = "default"
+# Network interface to target (for example: eth0, enp5s0, vethA)
+# Use "default" to resolve the system default interface at load time.
+target_iface = "default"
 
-# Network delay (ms)
+# Network delay in milliseconds
 # delay_ms = 100
 
 # Packet loss percentage (0.0 - 100.0)
 # loss_percent = 10.0
 
-# Cgroup attach point for network classifier.
-# Accepts cgroup IDs, i.e.:     [117, 419, 666]
+# Cgroup attach points for network classifier
+# Example: [117, 419, 666]
 # network_ebpf_cgroup = [24059]
+
 # -----------------------------
 # CPU + Memory (cgroup v2)
 # -----------------------------
@@ -66,7 +53,7 @@ enabled = false
 enabled = false
 
 # PID to constrain
-# target_pid = 0
+# target_pid = 12345
 
 # Move PID into target cgroup before applying limits
 # move_pid = true
@@ -74,7 +61,8 @@ enabled = false
 # Controllers to enable in cgroup.subtree_control
 # enable = ["cpu", "memory"]
 
-# CPU quota/period (e.g. "20000 100000" = 20% of one CPU)
+# CPU quota/period
+# Example: "20000 100000" = 20% of one CPU
 # cpu_max = "20000 100000"
 
 # CPU weight (1 - 10000)
@@ -109,17 +97,14 @@ enabled = false
 # -----------------------------
 # File Descriptor Exhaustion
 # -----------------------------
-
-# File Descriptor Injector
 [injectors.filesystem_config]
 enabled = false
 
-# target cgroup is read from [targets.cgroup]
-# Every PID in that cgroup will have it's RLIMIT_NOFILE's
-# soft_limit and hard_limit lowered for the duration specified
+# PID whose process context will be targeted
+# target_pid = 12345
 
-# What the soft limit will be lowered too (do not set too low)
-# soft_limit = 2
+# New soft RLIMIT_NOFILE value
+# soft_limit = 64
 
-# What the hard limit will be lowered too (do not set too low)
-# hard_limit = 4
+# New hard RLIMIT_NOFILE value
+# hard_limit = 128
