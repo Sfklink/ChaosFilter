@@ -1,7 +1,12 @@
-//! PID → cgroup v2 injector.
+//! # CPU and Memory Resource Injector
 //!
-//! Creates/uses a target cgroup, optionally moves a PID into it, writes cpu/memory knobs,
-//! and can revert by restoring previous knob values (best effort).
+//! This module implements resource constraints using **cgroups v2**. It allows
+//! limiting CPU usage (via `cpu.max` and `cpu.weight`) and memory usage
+//! (via `memory.max`, `memory.high`, and `memory.swap.max`) for specific processes.
+//!
+//! The injector can optionally move a target PID into a dedicated cgroup before
+//! applying the limits, and it snapshots the previous configuration to allow
+//! for a best-effort restoration during the revert phase.
 
 use crate::{plans::Plan, validate::validate_memory_config};
 use anyhow::{Context, Result, anyhow};
@@ -12,28 +17,50 @@ use std::{
 };
 use tracing::{debug, info, warn};
 
+/// State for the CPU and Memory injector.
+///
+/// Tracks the target PID, cgroup path, and the original resource limits
+/// to enable reversion.
 #[derive(Default)]
 pub struct MemoryConfig {
+    /// Indicates whether chaos has been applied.
     applied: bool,
 
-    // what we operated on
+    /// The target process ID.
     pid: Option<u32>,
+    /// The absolute path to the target cgroup directory.
     target_cg: Option<PathBuf>,
 
-    // revert state
+    /// The original cgroup path of the PID before it was moved.
     original_pid_cg: Option<PathBuf>,
+    /// The original value of `cpu.max`.
     prev_cpu_max: Option<String>,
+    /// The original value of `cpu.weight`.
     prev_cpu_weight: Option<String>,
+    /// The original value of `memory.max`.
     prev_mem_max: Option<String>,
+    /// The original value of `memory.high`.
     prev_mem_high: Option<String>,
+    /// The original value of `memory.swap.max`.
     prev_swap_max: Option<String>,
 }
 
+/// Type alias for [`MemoryConfig`] as a [`crate::injector::ChaosInjector`].
 pub type MemoryInjector = MemoryConfig;
 
 impl MemoryConfig {
-    //ugly debuggers dont even look at it
-
+    /// Ensures that the target cgroup is a "domain" cgroup, not "threaded".
+    ///
+    /// Moving PIDs into a cgroup via `cgroup.procs` requires the cgroup to be in
+    /// domain mode.
+    ///
+    /// # Arguments
+    ///
+    /// * `cg` - Path to the cgroup directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the cgroup type is "threaded".
     fn assert_domain_cgroup(cg: &Path) -> Result<()> {
         let ty = fs::read_to_string(cg.join("cgroup.type")).unwrap_or_default();
         if ty.contains("threaded") {
@@ -45,6 +72,30 @@ impl MemoryConfig {
         }
         Ok(())
     }
+
+    /// Applies the resource constraints defined in the [`Plan`].
+    ///
+    /// # Arguments
+    ///
+    /// * `plan` - The chaos plan containing memory and CPU configuration.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the limits were successfully applied.
+    ///
+    /// # Behavior
+    ///
+    /// 1. Validates the configuration.
+    /// 2. Resolves the target cgroup path.
+    /// 3. Ensures the cgroup directory exists.
+    /// 4. Enables required controllers on the parent cgroup.
+    /// 5. Snapshots current knob values for reversion.
+    /// 6. Optionally moves the target PID into the cgroup.
+    /// 7. Writes the new resource limits to the cgroup knobs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any filesystem operation on the cgroup hierarchy fails.
     pub fn apply(&mut self, plan: &Plan) -> Result<()> {
         if !plan.injectors.memory_config.enabled {
             return Ok(());
@@ -65,13 +116,11 @@ impl MemoryConfig {
 
         ensure_cgroup_dir_exists(&cg).context("failed to create/ensure cgroup directory")?;
 
-        // enable controllers on parent (best effort; fail is real because writing new cgroup vals may fail
         if !plan.injectors.memory_config.enable.is_empty() {
             enable_controllers_on_parent(&cg, &plan.injectors.memory_config.enable)
                 .context("failed enabling controllers on parent cgroup.subtree_control")?;
         }
 
-        // snapshot revert state
         self.prev_cpu_max = read_trimmed_opt(cg.join("cpu.max"));
         self.prev_cpu_weight = read_trimmed_opt(cg.join("cpu.weight"));
         self.prev_mem_max = read_trimmed_opt(cg.join("memory.max"));
@@ -83,11 +132,8 @@ impl MemoryConfig {
         self.target_cg = Some(cg.clone());
         debug!("revert state captured");
 
-        // more troubleshooting
         Self::assert_domain_cgroup(&cg)?;
 
-        // optionally move pid (idempotent)
-        // that means it only does one thing one time instead of  repeating itself
         if plan.injectors.memory_config.move_pid {
             match read_pid_cgroup_v2(pid) {
                 Some(cur) if cur == cg => {
@@ -103,44 +149,23 @@ impl MemoryConfig {
             }
         }
 
-        // checking flag characters because it keeps throwing an error for bad input to syscalls
-        // IT WAS NEWLINES
-        // DAMMIT NEWLINES
-        // CURSE YOU NEWLINES
-        if let Some(v) = plan.injectors.memory_config.cpu_max.as_deref() {
-            debug!(
-                raw = ?v,
-                bytes = ?v.as_bytes(),
-                "cpu.max raw value"
-            );
-
-            write_line(cg.join("cpu.max"), v)
-                .with_context(|| format!("failed writing cpu.max='{}' at {}", v, cg.display()))?;
-        }
-
-        // write knobs (only if present)
-        debug!("writing cpu.weight");
         if let Some(v) = plan.injectors.memory_config.cpu_max.as_deref() {
             write_line(cg.join("cpu.max"), v)
                 .with_context(|| format!("failed writing cpu.max='{}' at {}", v, cg.display()))?;
         }
 
-        debug!("writing cpu.weight");
         if let Some(w) = plan.injectors.memory_config.cpu_weight {
             write_line(cg.join("cpu.weight"), &w.to_string())?;
         }
 
-        debug!("writing memory.max");
         if let Some(v) = plan.injectors.memory_config.mem_max.as_deref() {
             write_line(cg.join("memory.max"), v)?;
         }
 
-        debug!("writing memory.high");
         if let Some(v) = plan.injectors.memory_config.mem_high.as_deref() {
             write_line(cg.join("memory.high"), v)?;
         }
 
-        debug!("writing memory.swap.max");
         if let Some(v) = plan.injectors.memory_config.swap_max.as_deref() {
             write_line(cg.join("memory.swap.max"), v)?;
         }
@@ -159,6 +184,20 @@ impl MemoryConfig {
         Ok(())
     }
 
+    /// Reverts the resource constraints to their original values.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success.
+    ///
+    /// # Behavior
+    ///
+    /// 1. Restores the snapshotted values for each cgroup knob.
+    /// 2. If the PID was moved, attempts to move it back to its original cgroup.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if internal state is missing or if restoration fails.
     pub fn revert(&mut self) -> Result<()> {
         if !self.applied {
             debug!("nothing applied; skipping revert");
@@ -179,16 +218,13 @@ impl MemoryConfig {
             "reverting cgroup knobs"
         );
 
-        // restore original (best effort-ish: if file exists, try write)
         restore_opt(cg.join("cpu.max"), self.prev_cpu_max.as_deref())?;
         restore_opt(cg.join("cpu.weight"), self.prev_cpu_weight.as_deref())?;
         restore_opt(cg.join("memory.max"), self.prev_mem_max.as_deref())?;
         restore_opt(cg.join("memory.high"), self.prev_mem_high.as_deref())?;
         restore_opt(cg.join("memory.swap.max"), self.prev_swap_max.as_deref())?;
 
-        // move pid back to its original cgroup if captured it
         if let Some(orig) = self.original_pid_cg.as_ref() {
-            // writing PID to cgroup.procs moves it
             if orig.exists() {
                 if let Err(e) = move_pid_into_cgroup(orig, pid) {
                     warn!(
@@ -206,8 +242,7 @@ impl MemoryConfig {
     }
 }
 
-/* ------------------------- helpers ------------------------- */
-
+/// Resolves a relative cgroup path against the system root (`/sys/fs/cgroup`).
 fn resolve_cgroup_path(arg: String) -> PathBuf {
     let p = PathBuf::from(arg);
     if p.is_absolute() {
@@ -217,6 +252,7 @@ fn resolve_cgroup_path(arg: String) -> PathBuf {
     }
 }
 
+/// Ensures the specified cgroup directory exists.
 fn ensure_cgroup_dir_exists(cg: &Path) -> std::io::Result<()> {
     if !cg.exists() {
         fs::create_dir_all(cg)?;
@@ -224,18 +260,16 @@ fn ensure_cgroup_dir_exists(cg: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-//new write_line that debugs EVEN MORE BETTER
-// so the last failure was due to appending newlines on to it which makes cgroups SUPER TEMPERAMENTAL
+/// Writes a single line to a cgroup knob file.
+///
+/// This helper ensures that the value is trimmed and followed by a single newline,
+/// as cgroupfs can be sensitive to trailing whitespace.
 fn write_line(path: impl AsRef<Path>, value: &str) -> std::io::Result<()> {
-    use std::io::Write;
-
     let path = path.as_ref();
     let mut f = fs::OpenOptions::new().write(true).open(path)?;
 
-    // cgroup expects exact tokens, no CRLF, no surrounding whitespace.
     let v = value.trim();
 
-    // One single write to avoid cgroupfs rejecting split writes.
     let mut buf = Vec::with_capacity(v.len() + 1);
     buf.extend_from_slice(v.as_bytes());
     buf.push(b'\n');
@@ -245,6 +279,7 @@ fn write_line(path: impl AsRef<Path>, value: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Reads a cgroup knob file and returns its trimmed contents.
 fn read_trimmed_opt(path: PathBuf) -> Option<String> {
     let mut s = String::new();
     let mut f = fs::OpenOptions::new().read(true).open(&path).ok()?;
@@ -252,16 +287,18 @@ fn read_trimmed_opt(path: PathBuf) -> Option<String> {
     Some(s.trim().to_string())
 }
 
+/// Restores a cgroup knob to a previous value if provided.
 fn restore_opt(path: PathBuf, v: Option<&str>) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
     if let Some(val) = v {
-        write_line(path, val)?; // converts std::io::Error -> anyhow::Error
+        write_line(path, val)?;
     }
     Ok(())
 }
 
+/// Enables controllers in the `subtree_control` file of a cgroup's parent.
 fn enable_controllers_on_parent(cg: &Path, controllers: &[String]) -> std::io::Result<()> {
     let parent = cg.parent().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, "cgroup has no parent")
@@ -269,7 +306,6 @@ fn enable_controllers_on_parent(cg: &Path, controllers: &[String]) -> std::io::R
 
     let subtree = parent.join("cgroup.subtree_control");
 
-    // one per write: robust under various kernels/setups
     for c in controllers {
         let line = format!("+{c}\n");
         let mut f = fs::OpenOptions::new().write(true).open(&subtree)?;
@@ -278,6 +314,7 @@ fn enable_controllers_on_parent(cg: &Path, controllers: &[String]) -> std::io::R
     Ok(())
 }
 
+/// Moves a PID into the specified cgroup by writing to `cgroup.procs`.
 fn move_pid_into_cgroup(cg: &Path, pid: u32) -> std::io::Result<()> {
     let path = cg.join("cgroup.procs");
     let mut f = fs::OpenOptions::new().write(true).open(path)?;
@@ -289,12 +326,10 @@ fn move_pid_into_cgroup(cg: &Path, pid: u32) -> std::io::Result<()> {
 }
 
 /// Reads the cgroup v2 path for a PID and returns the absolute cgroup directory.
-/// For v2, /proc/<pid>/cgroup has a line like: `0::/some/path`
 fn read_pid_cgroup_v2(pid: u32) -> Option<PathBuf> {
     let p = format!("/proc/{pid}/cgroup");
     let contents = fs::read_to_string(p).ok()?;
     for line in contents.lines() {
-        // v2 unified hierarchy
         if let Some(rest) = line.strip_prefix("0::") {
             let rel = rest.trim();
             return Some(Path::new("/sys/fs/cgroup").join(rel.trim_start_matches('/')));

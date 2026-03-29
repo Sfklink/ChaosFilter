@@ -1,12 +1,14 @@
+//! # Chaos Plan Schema
+//!
+//! This module defines the data structures used to represent a chaos experiment.
+//! These structures are designed to be deserialized from TOML configuration files,
+//! providing a declarative way to specify fault injection parameters.
+
 use anyhow::{anyhow, Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-/*
-Most likely going to add scheduler in here so we can fire sequentially.  Just has to deal with
-sequencing and variable intake.
- */
 
 /// Top-level chaos plan configuration.
 ///
@@ -18,10 +20,10 @@ pub struct Plan {
     /// Human-readable plan name (for logs/UI).
     pub name: String,
 
-    /// How long chaos should run.
+    /// Timing parameters for the experiment.
     pub schedule: Schedule,
 
-    /// Injector configuration (netem, etc.).
+    /// Configuration for individual fault injectors.
     #[serde(default)]
     pub injectors: Injectors,
 }
@@ -29,17 +31,28 @@ pub struct Plan {
 impl Plan {
     /// Loads a [`Plan`] from a TOML configuration file.
     ///
+    /// This method reads a TOML file from disk, parses it into a [`Plan`] struct,
+    /// and performs post-processing such as resolving the "default" network interface.
+    ///
     /// # Arguments
-    /// * `path` - Path to a TOML file describing a chaos plan.
+    ///
+    /// * `path` - The filesystem path to the TOML configuration file.
     ///
     /// # Returns
-    /// Returns a fully-deserialized [`Plan`] on success.
+    ///
+    /// Returns a fully-deserialized and processed [`Plan`] on success.
     ///
     /// # Side Effects
-    /// Reads the configuration file from disk.
+    ///
+    /// - Reads from the filesystem.
+    /// - Executes `ip route get` to resolve the default network interface if specified.
     ///
     /// # Errors
-    /// Returns an error if the file cannot be read or the TOML cannot be parsed.
+    ///
+    /// Returns an error if:
+    /// - The file cannot be read.
+    /// - The TOML syntax is invalid.
+    /// - The "default" interface cannot be determined when requested.
     pub fn load_from_toml_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let s = fs::read_to_string(path)
@@ -48,6 +61,7 @@ impl Plan {
         let mut plan: Plan = toml::from_str(&s)
             .with_context(|| format!("failed to parse TOML in: {}", path.display()))?;
 
+        /// Internal helper to determine the default network interface.
         fn get_default_iface() -> Option<String> {
             let output = std::process::Command::new("ip")
                 .args(["route", "get", "8.8.8.8"])
@@ -79,32 +93,41 @@ impl Plan {
 
         Ok(plan)
     }
-
 }
-/// Injector configuration block.
+
+/// Collection of all available injectors.
 ///
-/// Each field represents configuration for a specific chaos mechanism.
+/// This struct aggregates the configuration for different types of fault injection.
+/// Each field corresponds to a specific [`crate::injector::ChaosInjector`] implementation.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Injectors {
+    /// Network-level fault injection (loss, delay).
     #[serde(default)]
     pub network_config: NetworkConfig,
+
+    /// CPU and Memory resource constraints.
     #[serde(default)]
     pub memory_config: MemoryConfig,
+
+    /// Block device I/O throttling.
     #[serde(default)]
     pub block_config: BlockConfig,
+
+    /// Filesystem resource limits (e.g., file descriptors).
     #[serde(default)]
     pub filesystem_config: FileSystemConfig,
-
 }
 
-/// Configuration for the `injector/qdisc.rs` injector.
-/// THIS IS MISSING QUITE A BIT, WHAT'S THE INTERFACE THAT WE'RE CONNECTING TO
+/// Configuration for network fault injection.
+///
+/// Utilizes `tc` and `netem` to manipulate outgoing traffic.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NetworkConfig {
     /// Master enable flag for this injector.
     #[serde(default)]
     pub enabled: bool,
 
+    /// The network interface to target (e.g., "eth0"). Use "default" to auto-detect.
     #[serde(default)]
     pub target_iface: Option<String>,
 
@@ -112,100 +135,122 @@ pub struct NetworkConfig {
     #[serde(default)]
     pub delay_ms: u32,
 
-    /// Packet loss percentage (`0.0`–`100.0`).
+    /// Packet loss percentage (0.0–100.0).
     #[serde(default)]
     pub loss_percent: f32,
 
+    /// Optional cgroup IDs for eBPF-based network filtering.
     #[serde(default)]
     pub network_ebpf_cgroup: Vec<u64>,
 }
 
+/// Configuration for CPU and Memory constraints.
+///
+/// Leverages Linux cgroups v2 to enforce resource limits on specific processes.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MemoryConfig {
     /// Master enable flag for this injector.
     #[serde(default)]
     pub enabled: bool,
 
-    /// PID to move / apply limits to.
+    /// The PID of the process to constrain.
     pub target_pid: Option<u32>,
 
-    /// If true, move PID into the target cgroup before writing new config.
+    /// If true, moves the process into a dedicated cgroup before applying limits.
     #[serde(default)]
     pub move_pid: bool,
 
-    /// Controllers to enable on the *parent* subtree_control (v2).
-    /// Example: ["cpu", "memory"]
+    /// Cgroup v2 controllers to enable (e.g., ["cpu", "memory"]).
     #[serde(default)]
     pub enable: Vec<String>,
 
-    /// cpu.max value, stored in cgroup v2 format: "max 100000" or "50000 100000"
+    /// CPU limit in cgroup v2 format (e.g., "max 100000" or "50000 100000").
     pub cpu_max: Option<String>,
 
+    /// CPU weight for proportional sharing.
     pub cpu_weight: Option<u32>,
 
+    /// Maximum memory limit (e.g., "1G").
     pub mem_max: Option<String>,
+
+    /// High memory water mark (soft limit).
     pub mem_high: Option<String>,
+
+    /// Maximum swap usage.
     pub swap_max: Option<String>,
 }
 
-/// Configuration for block io stuff
+/// Configuration for Block I/O throttling.
+///
+/// Limits read/write throughput and IOPS for specific block devices.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BlockConfig {
-    /// the master enable flag cause it seemed important
+    /// Master enable flag for this injector.
     #[serde(default)]
     pub enabled: bool,
 
-    /// what it is delaying
+    /// The block device path (e.g., "/dev/sda").
     #[serde(default)]
     pub device: Option<String>,
 
-    /// specific values that are being affected
+    /// Read bytes per second limit.
     pub rbps: Option<u64>,
+
+    /// Write bytes per second limit.
     pub wbps: Option<u64>,
+
+    /// Read I/O operations per second limit.
     pub riops: Option<u64>,
+
+    /// Write I/O operations per second limit.
     pub wiops: Option<u64>,
 }
 
-/// Configuration for File Descriptor Exhaustion
+/// Configuration for filesystem-related limits.
+///
+/// Primarily focuses on file descriptor exhaustion by manipulating `RLIMIT_NOFILE`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FileSystemConfig {
-    /// master enable flag
+    /// Master enable flag for this injector.
     #[serde(default)]
     pub enabled: bool,
 
-    /// PID to move / apply limits to.
+    /// The PID of the target process.
     pub target_pid: Option<u32>,
 
-    /// New soft limit for RLIMIT_NOFILE applied to each PID in the cgroup. (e.g., 32, 64)
-    /// Must be < hard_limit or it will cause issues.
+    /// New soft limit for open file descriptors.
     #[serde(default)]
     pub soft_limit: u64,
 
-    /// New hard limit for RLIMIT_NOFILE applied to each PID in the cgroup. (e.g., 128, 256)
-    /// Must be > soft_limit or it will cause issues.
+    /// New hard limit for open file descriptors.
     #[serde(default)]
     pub hard_limit: u64,
 }
 
-
-/// Execution timing parameters for a chaos plan.
+/// Execution timing parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Schedule {
-    /// Duration to hold chaos in milliseconds.
+    /// Duration to maintain the chaos state in seconds.
     pub duration_s: u64,
 }
 
+/// Shared subcommands between CLI entry points.
 #[derive(Subcommand, Debug, Clone)]
 pub enum CommonCommand {
+    /// Validate a chaos plan.
     Validate(RunConfigArgs),
+
+    /// Execute a chaos plan.
     Chaos(RunConfigArgs),
+
+    /// Initialize a new configuration file.
     Init,
 }
 
+/// Arguments for commands that require a configuration file.
 #[derive(Debug, Clone, Args)]
 pub struct RunConfigArgs {
-    /// Path to TOML config
-    /// Used in chaosfilter --config <filename_here>.toml
+    /// Path to the TOML configuration file.
     #[arg(short, long)]
     pub config: String,
 }

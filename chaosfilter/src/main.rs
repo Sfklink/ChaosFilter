@@ -1,3 +1,9 @@
+//! # ChaosFilter CLI & Orchestrator
+//!
+//! This module serves as the primary entry point for the `chaosfilter` application.
+//! It handles CLI argument parsing using [`clap`], initializes logging, and
+//! orchestrates the lifecycle of a chaos experiment (apply → hold → revert).
+
 use anyhow::Context;
 use chaosfilter::plans::{Plan, RunConfigArgs};
 use chaosfilter::injector::block_delay::BlockDelayInjector;
@@ -14,56 +20,51 @@ use std::{fs, path::{Path, PathBuf}};
 use toml_edit::{value, DocumentMut};
 use tracing::{debug, info};
 
+/// The configuration template used by [`Commands::Init`].
 const CONFIG_TEMPLATE: &str =
     include_str!("../assets/schema_config.toml");
 
 fn main() {
-
     if let Err(e) = entry(std::env::args_os()) {
         eprintln!("{e:#}");
         std::process::exit(1);
     }
 }
 
-/// CLI entrypoint used by `main`.
+/// CLI entrypoint used by [`main`].
 ///
-/// Parses CLI arguments into [`Cli`] and dispatches to the selected
-/// subcommand.
+/// This function is responsible for:
+/// 1. Parsing command-line arguments into the [`Cli`] struct.
+/// 2. Initializing the global tracing subscriber based on verbosity levels.
+/// 3. Dispatching execution to the appropriate subcommand handler.
 ///
 /// # Arguments
-/// * `args` - Iterator of command-line arguments (typically from
-///   [`std::env::args_os`]).
+///
+/// * `args` - An iterator of command-line arguments, typically provided by [`std::env::args_os`].
 ///
 /// # Returns
-/// Returns `Ok(())` if the selected command completes successfully.
+///
+/// Returns `Ok(())` if the selected command completes successfully, otherwise an [`anyhow::Result`].
 ///
 /// # Behavior
-/// - For [`Commands::Validate`]:
-///     - Builds a plan via [`RunLikeArgs::plan_from_args`].
-///     - Validates the plan using [`chaosfilter_common::validate_plan`].
 ///
-/// - For [`Commands::Chaos`]:
-///     - Loads the plan from the config file and runs [`run_plan`] (injectors apply → hold → revert).
-///
-/// - For ['Commands::Init']
-///     - Outputs a .toml config file to eprintlnCWD.
+/// - **[`Commands::Validate`]**: Loads a [`Plan`] from a TOML file and performs dry-run validation.
+/// - **[`Commands::Chaos`]**: Executes a full chaos experiment by calling [`run_plan`].
+/// - **[`Commands::Init`]**: Generates a skeleton TOML configuration file in the current directory.
 ///
 /// # Side Effects
-/// - Prints status messages to standard output.
-/// - May modify system state via injector operations (e.g., `tc`, qdisc).
-/// - May launch an interactive stdin/stdout loop.
+///
+/// - Initializes global logging (via `tracing-subscriber`).
+/// - Writes to the filesystem when running `init`.
+/// - Modifies system state (network, cgroups, etc.) when running `chaos`.
 ///
 /// # Errors
-/// Returns an error if:
-/// - Argument parsing fails.
-/// - Plan construction fails (invalid config or missing inline flags).
-/// - Validation fails.
-/// - Chaos execution fails.
-/// - Any downstream injector operation fails.
 ///
-/// # Panics
-/// This function does not explicitly panic.
-/// Panics may propagate from lower-level modules if not handled.
+/// Returns an error if:
+/// - CLI arguments are invalid.
+/// - The configuration file cannot be found or parsed.
+/// - Validation of the chaos plan fails.
+/// - Any injector fails during the apply or revert phases.
 pub fn entry<I, T>(args: I) -> anyhow::Result<()>
 where
     I: IntoIterator<Item = T>,
@@ -71,10 +72,6 @@ where
 {
     let cli = Cli::parse_from(args);
 
-    // Subscriber is initialized here based on what level of verbose you want:
-    //   (no flag)  → logging off entirely
-    //   -v         → INFO
-    //   -vv        → DEBUG
     let level: &str = match cli.verbose {
         0 => "off",
         1 => "info",
@@ -104,11 +101,7 @@ where
             println!("\nChaos Plan Complete.");
             Ok(())
         }
-        /*
-        This guy right here.
-        We're going to include an init command that points to a .toml file so we can spawn one for the user
-        and reads it out.  can include pid and interface
-         */
+
         Commands::Init {
             force,
             pid,
@@ -116,8 +109,6 @@ where
             pid_pos,
             iface_pos,
         } => {
-            // explicit over positional but should still work
-            // i hope
             let pid = pid.or(pid_pos);
             let iface = iface.or(iface_pos);
 
@@ -134,6 +125,35 @@ where
     }
 }
 
+/// Orchestrates the execution of a chaos [`Plan`].
+///
+/// This function identifies which injectors are enabled in the plan,
+/// applies them in sequence, waits for the configured duration (or a SIGINT),
+/// and then reverts all changes.
+///
+/// # Arguments
+///
+/// * `plan` - The validated chaos [`Plan`] to execute.
+///
+/// # Returns
+///
+/// Returns `Ok(())` if all injectors were successfully applied and reverted.
+///
+/// # Behavior
+///
+/// 1. **Initialization**: Instantiates [`ChaosInjector`] implementations based on the plan.
+/// 2. **Application**: Calls [`ChaosInjector::apply`] for each injector.
+/// 3. **Holding**: Blocks for `plan.schedule.duration_s`. Can be interrupted by `Ctrl+C`.
+/// 4. **Reversion**: Calls [`ChaosInjector::revert`] for each injector in the same order they were applied.
+///
+/// # Side Effects
+///
+/// - Modifies system state via the enabled injectors.
+/// - Installs a global signal handler for `Ctrl+C`.
+///
+/// # Errors
+///
+/// Returns an error if any injector fails to apply or revert, or if the stop signal handler fails.
 pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
     let mut injectors: Vec<Box<dyn ChaosInjector>> = Vec::new();
 
@@ -178,6 +198,36 @@ pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Generates a skeleton TOML configuration file.
+///
+/// # Arguments
+///
+/// * `path` - The destination path for the config file.
+/// * `force` - If `true`, overwrites the file if it already exists.
+/// * `pid` - Optional PID to pre-configure in the memory injector.
+/// * `interface` - Optional network interface to pre-configure in the network injector.
+///
+/// # Returns
+///
+/// Returns the absolute [`PathBuf`] to the written file.
+///
+/// # Behavior
+///
+/// - Loads [`CONFIG_TEMPLATE`].
+/// - If `pid` or `interface` are provided, it automatically enables the corresponding
+///   injectors and populates the target fields.
+/// - Writes the resulting TOML to disk.
+///
+/// # Side Effects
+///
+/// - Writes a file to the filesystem.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The output path exists and `force` is `false`.
+/// - The internal TOML template is invalid.
+/// - Disk I/O fails.
 pub fn output_config(
     path: &Path,
     force: bool,
@@ -185,8 +235,7 @@ pub fn output_config(
     interface: Option<&str>,
 ) -> anyhow::Result<PathBuf> {
     debug!(pid = ?pid, iface = ?interface, force, "init args");
-    // check if current filepath is root, most likely won't be but this is edge-case coverage
-    // If it's relative, make it relative to the current working directory.
+    
     let abs_path = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -194,6 +243,7 @@ pub fn output_config(
             .context("failed to read current working directory")?
             .join(path)
     };
+
     if abs_path.exists() && !force {
         anyhow::bail!(
             "{} already exists. Re-run with --force to overwrite.",
@@ -205,23 +255,20 @@ pub fn output_config(
         .parse::<DocumentMut>()
         .context("embedded config template is invalid TOML")?;
 
-    // If interface provided: set target_iface + enable network injector
     if let Some(iface) = interface {
         doc["injectors"]["network_config"]["enabled"] = value(true);
         doc["injectors"]["network_config"]["target_iface"] = value(iface);
         info!(iface, "network injector enabled");
-        // set iface
-
-    }else{
+    } else {
         doc["injectors"]["network_config"]["enabled"] = value(false);
     }
-    // If pid provided: set target_pid + enable memory injector
+
     if let Some(p) = pid {
         doc["targets"]["cgroup"] = value(p.to_string());
         doc["injectors"]["memory_config"]["target_pid"] = value(p.to_string());
         doc["injectors"]["memory_config"]["enabled"] = value(true);
         info!(pid = p, "memory injector enabled");
-    }else {
+    } else {
         doc["injectors"]["memory_config"]["enabled"] = value(false);
     }
 
@@ -238,6 +285,7 @@ pub fn output_config(
 /// subcommand.
 ///
 /// # Behavior
+///
 /// Delegates execution to one of the variants in [`Commands`].
 #[derive(Parser, Debug)]
 #[command(name = "chaosfilter-cli", version, about = "ChaosFilter CLI & UI")]
@@ -249,25 +297,20 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 }
+
 /// Available CLI subcommands.
 ///
 /// Each variant corresponds to a distinct execution path
 /// within ChaosFilter.
-///
-/// # Variants
-/// - [`Commands::Validate`] → Validates a chaos plan.
-/// - [`Commands::Chaos`] → Executes a chaos plan (apply → hold → revert).
-/// - [`Commands::Init`] → Output a sample config file to CWD.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Validate a chaos plan from config. or inline flags)
+    /// Validate a chaos plan from config.
     Validate(RunConfigArgs),
 
     /// Run the chaos plan (apply -> hold -> revert)
     Chaos(RunConfigArgs),
 
-    /// Output a config file to local directory.  Include process_id and network_interface
-    /// for auto-enable on network_config and memory_config
+    /// Generate a sample config file in the current directory.
     Init {
         /// Overwrite the file if it already exists
         #[arg(long)]

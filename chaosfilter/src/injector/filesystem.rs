@@ -1,20 +1,17 @@
-//! File-descriptor exhaustion injector.
+//! # Filesystem Resource Injector
 //!
-//! Reads every PID from the specified target cgroup, records each process's
-//! current `RLIMIT_NOFILE` via `prlimit64(2)`, then lowers both the soft
-//! and hard limits to the values supplied in [`FdConfig`].
+//! This module implements filesystem-related chaos, primarily focusing on
+//! **file descriptor exhaustion**. It works by lowering the `RLIMIT_NOFILE`
+//! (maximum number of open file descriptors) for all processes within a
+//! target cgroup using the `prlimit64(2)` system call.
 //!
-//! Calls [`FdExhaustConfig::aply`] to impose the limits and [`FdExhaustConfig::revert`]
-//! to restore them to the original. The caller/user is responsible for all scheduling,
-//! or in other words how long to hold chaos and when to revert.
+//! # Kernel Background
 //!
-//! # Kernel background
-//! Every open file in the kernel is represented by an integer file descriptor
-//! (fd). The kernel enforces a per-process limit via `RLIMIT_NOFILE`.
-//! When a process calss `open(2)` / `openat(2)` and the number of open fd(s)
-//! already equals the soft limit, the syscall returns `EMFILE`. It is worth
-//! nothing that the kernel *doesn't* automatically kill the process, but any
-//! code that doesn't handle `EMFILE` will crash or malfunction.
+//! Every open file in the kernel is represented by an integer file descriptor.
+//! The kernel enforces a per-process limit via `RLIMIT_NOFILE`. When a process
+//! attempts to open a file and its current count equals the soft limit, the
+//! syscall returns `EMFILE`. While the kernel does not kill the process,
+//! many applications will crash or malfunction if they cannot open new files.
 
 use crate::{plans::Plan, validate::validate_filesystem_config};
 use anyhow::{anyhow, Result, Context};
@@ -22,25 +19,51 @@ use libc::{self, rlimit64, RLIMIT_NOFILE};
 use std::{fs, path::{Path, PathBuf}};
 use tracing::{info, warn, debug};
 
-/// Snapshot of each RLIMIT_NOFILE per process
+/// Snapshot of a process's original file descriptor limits.
 struct SavedLimitConfig {
+    /// The process ID.
     pid: u32,
+    /// The original soft limit.
     soft: u64,
+    /// The original hard limit.
     hard: u64,
 }
 
-/// Tracker for the cgroup so what was applied can be undone with `revert`
+/// The filesystem fault injector implementation.
 #[derive(Default)]
 pub struct FilesystemInjector {
+    /// Indicates whether chaos has been applied.
     applied: bool,
+    /// A collection of original limits for all modified processes.
     saved: Vec<SavedLimitConfig>
 }
 
 impl FilesystemInjector {
-    /// Apply reduced `RLIMIT_NOFILE` to every PID in the target cgroup
+    /// Applies reduced `RLIMIT_NOFILE` limits to every PID in the target cgroup.
+    ///
+    /// # Arguments
+    ///
+    /// * `plan` - The chaos plan containing filesystem configuration.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the limits were successfully applied to the cgroup's processes.
+    ///
+    /// # Behavior
+    ///
+    /// 1. Validates the configuration.
+    /// 2. Resolves the target cgroup path.
+    /// 3. Reads all PIDs currently in the cgroup.
+    /// 4. For each PID, snapshots the current `RLIMIT_NOFILE` and applies the new limits.
+    ///
+    /// # Side Effects
+    ///
+    /// - Modifies the resource limits of external processes.
     ///
     /// # Errors
-    /// - Returns an error if the cgroup cannot be read or if `prlimit64` fails
+    ///
+    /// Returns an error if the cgroup cannot be read or if internal validation fails.
+    /// Individual `prlimit64` failures are logged as warnings.
     pub fn apply(&mut self, plan: &Plan) -> Result<()> {
         if !plan.injectors.filesystem_config.enabled {
             debug!("filesystem injector not enabled; skipping");
@@ -49,7 +72,6 @@ impl FilesystemInjector {
 
         validate_filesystem_config(plan)?;
 
-        // target cgroup required if enabled
         let cg_rel = plan
             .injectors
             .filesystem_config
@@ -111,7 +133,19 @@ impl FilesystemInjector {
         Ok(())
     }
 
-    /// Restores the original `RLIMIT_NOFILE` for every PID that was modified.
+    /// Restores the original `RLIMIT_NOFILE` for every process that was modified.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success.
+    ///
+    /// # Behavior
+    ///
+    /// Iterates through the snapshotted limits and reapplies them to each process.
+    ///
+    /// # Side Effects
+    ///
+    /// - Restores the resource limits of external processes.
     pub fn revert(&mut self) -> Result<()> {
         if !self.applied {
             return Ok(());
@@ -159,7 +193,7 @@ impl crate::injector::ChaosInjector for FilesystemInjector {
     }
 }
 
-// Helper methods
+/// Resolves a relative cgroup path against the system root.
 fn resolve_cgroup_path(arg: &str) -> PathBuf {
     let path = PathBuf::from(arg);
     if path.is_absolute() {
@@ -169,7 +203,7 @@ fn resolve_cgroup_path(arg: &str) -> PathBuf {
     }
 }
 
-/// Returns all PIDs listen in <targets.cgroup>/**
+/// Reads all PIDs currently belonging to the specified cgroup.
 fn read_cgroup_pids(cg: &Path) -> Result<Vec<u32>> {
     let procs_path = cg.join("cgroup.procs");
     let contents = fs::read_to_string(&procs_path)
@@ -188,15 +222,21 @@ fn read_cgroup_pids(cg: &Path) -> Result<Vec<u32>> {
     Ok(pids)
 }
 
-/// Returns `(soft, hard)` RLIMIT_NOFILE for `pid` via `prlimit64(2)`.
-/// If `pid = 0` is passed in, it will target the calling process instead
+/// Retrieves the current `RLIMIT_NOFILE` for a specific process.
+///
+/// # Arguments
+///
+/// * `pid` - The target process ID (0 for the calling process).
+///
+/// # Returns
+///
+/// Returns a tuple of `(soft_limit, hard_limit)` on success.
 fn get_rlimit_nofile(pid: u32) -> Result<(u64, u64)> {
     let mut old = rlimit64 {
         rlim_cur: 0,
         rlim_max: 0,
     };
 
-    // prlimit64(pid, RLIMIT_NOFILE, NULL, &old) → just read, do not set.
     let rc = unsafe {
         libc::prlimit64(
             pid as libc::pid_t,
@@ -214,7 +254,13 @@ fn get_rlimit_nofile(pid: u32) -> Result<(u64, u64)> {
     Ok((old.rlim_cur, old.rlim_max))
 }
 
-/// Sets `RLIMIT_NOFILE` for the `pid` to `(soft, hard)` via `prlimit64(2)`.
+/// Sets the `RLIMIT_NOFILE` for a specific process.
+///
+/// # Arguments
+///
+/// * `pid` - The target process ID (0 for the calling process).
+/// * `soft` - The new soft limit.
+/// * `hard` - The new hard limit.
 fn set_rlimit_nofile(pid: u32, soft: u64, hard: u64) -> Result<()> {
     let new_lim = rlimit64 {
         rlim_cur: soft,
