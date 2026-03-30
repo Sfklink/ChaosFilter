@@ -111,7 +111,7 @@ impl MemoryConfig {
         info!(
             cgroup = %cg.display(),
             pid,
-            "applying cgroup resource controllers"
+            "applying changes to cgroup resource controllers"
         );
 
         ensure_cgroup_dir_exists(&cg).context("failed to create/ensure cgroup directory")?;
