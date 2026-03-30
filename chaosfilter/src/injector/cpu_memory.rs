@@ -89,9 +89,9 @@ impl MemoryConfig {
     /// 2. Resolves the target cgroup path.
     /// 3. Ensures the cgroup directory exists.
     /// 4. Enables required controllers on the parent cgroup.
-    /// 5. Snapshots current knob values for reversion.
+    /// 5. Snapshots current resource controller values for reversion.
     /// 6. Optionally moves the target PID into the cgroup.
-    /// 7. Writes the new resource limits to the cgroup knobs.
+    /// 7. Writes the new resource limits to the cgroup resource controllers.
     ///
     /// # Errors
     ///
@@ -111,7 +111,7 @@ impl MemoryConfig {
         info!(
             cgroup = %cg.display(),
             pid,
-            "applying cgroup knobs"
+            "applying cgroup resource controllers"
         );
 
         ensure_cgroup_dir_exists(&cg).context("failed to create/ensure cgroup directory")?;
@@ -192,7 +192,7 @@ impl MemoryConfig {
     ///
     /// # Behavior
     ///
-    /// 1. Restores the snapshotted values for each cgroup knob.
+    /// 1. Restores the snapshotted values for each cgroup resource controller.
     /// 2. If the PID was moved, attempts to move it back to its original cgroup.
     ///
     /// # Errors
@@ -215,7 +215,7 @@ impl MemoryConfig {
         info!(
             cgroup = %cg.display(),
             pid,
-            "reverting cgroup knobs"
+            "reverting changes to cgroup resource controllers"
         );
 
         restore_opt(cg.join("cpu.max"), self.prev_cpu_max.as_deref())?;
@@ -260,7 +260,7 @@ fn ensure_cgroup_dir_exists(cg: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Writes a single line to a cgroup knob file.
+/// Writes a single line to a cgroup resource controller file.
 ///
 /// This helper ensures that the value is trimmed and followed by a single newline,
 /// as cgroupfs can be sensitive to trailing whitespace.
@@ -279,7 +279,7 @@ fn write_line(path: impl AsRef<Path>, value: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Reads a cgroup knob file and returns its trimmed contents.
+/// Reads a cgroup resource controller file and returns its trimmed contents.
 fn read_trimmed_opt(path: PathBuf) -> Option<String> {
     let mut s = String::new();
     let mut f = fs::OpenOptions::new().read(true).open(&path).ok()?;
@@ -287,7 +287,7 @@ fn read_trimmed_opt(path: PathBuf) -> Option<String> {
     Some(s.trim().to_string())
 }
 
-/// Restores a cgroup knob to a previous value if provided.
+/// Restores a cgroup resource controller to a previous value if provided.
 fn restore_opt(path: PathBuf, v: Option<&str>) -> Result<()> {
     if !path.exists() {
         return Ok(());
