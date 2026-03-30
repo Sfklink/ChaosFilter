@@ -1,3 +1,9 @@
+//! # Block Device I/O Injector
+//!
+//! This module implements I/O throttling for block devices using **cgroups v2**
+//! and the `io.max` controller. It allows limiting read/write throughput (BPS)
+//! and operations per second (IOPS) for specific block devices.
+
 use crate::injector::ChaosInjector;
 use crate::plans::Plan;
 use crate::validate::validate_block_config;
@@ -10,6 +16,19 @@ use std::process::Command;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
+/// Resolves the major and minor device numbers for a given block device path.
+///
+/// # Arguments
+///
+/// * `device_path` - The path to the block device (e.g., "/dev/sda").
+///
+/// # Returns
+///
+/// Returns a string in the format "major:minor" on success.
+///
+/// # Errors
+///
+/// Returns an error if the device path does not exist or metadata cannot be read.
 fn major_minor(device_path: &str) -> Result<String> {
     let path = Path::new(device_path);
 
@@ -25,7 +44,21 @@ fn major_minor(device_path: &str) -> Result<String> {
     Ok(format!("{}:{}", major, minor))
 }
 
-// simple disk speed test (control vs experimental)
+/// Performs a simple disk throughput test using `dd`.
+///
+/// This is used to verify the impact of the throttle.
+///
+/// # Arguments
+///
+/// * `label` - A descriptive label for the test (e.g., "CONTROL").
+///
+/// # Returns
+///
+/// Returns the throughput in MB/s on success.
+///
+/// # Errors
+///
+/// Returns an error if the `dd` command fails.
 fn run_disk_test(label: &str) -> Result<f64> {
     info!(label, "starting disk test");
 
@@ -49,16 +82,19 @@ fn run_disk_test(label: &str) -> Result<f64> {
         "disk test complete"
     );
 
-    // cleanup test file
     let _ = fs::remove_file("testfile");
 
     Ok(mbps)
 }
 
+/// State for the block device I/O injector.
 #[derive(Default)]
 pub struct BlockDelayInjector {
+    /// Indicates whether chaos has been applied.
     applied: bool,
+    /// Path to the `io.max` knob file.
     io_max_path: Option<PathBuf>,
+    /// Original contents of the `io.max` file before modification.
     saved_io_max: Option<String>,
 }
 
@@ -67,6 +103,34 @@ impl ChaosInjector for BlockDelayInjector {
         "block_delay"
     }
 
+    /// Applies the I/O throttle defined in the [`Plan`].
+    ///
+    /// # Arguments
+    ///
+    /// * `plan` - The chaos plan containing block configuration.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the throttle was successfully applied.
+    ///
+    /// # Behavior
+    ///
+    /// 1. Validates the configuration.
+    /// 2. Resolves the major:minor numbers for the target device.
+    /// 3. Ensures the target cgroup exists and has the `io` controller enabled.
+    /// 4. Moves the current process into the target cgroup.
+    /// 5. Snapshots the current `io.max` state.
+    /// 6. Writes the new throttle rule to `io.max`.
+    ///
+    /// # Side Effects
+    ///
+    /// - Creates cgroup directories.
+    /// - Moves the calling process into a new cgroup.
+    /// - Modifies system I/O scheduling for the target device.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any filesystem or cgroup operation fails.
     fn apply(&mut self, plan: Plan) -> Result<()> {
         let cfg = &plan.injectors.block_config;
 
@@ -164,6 +228,15 @@ impl ChaosInjector for BlockDelayInjector {
         Ok(())
     }
 
+    /// Reverts the I/O throttle by restoring the original `io.max` content.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the restoration fails.
     fn revert(&mut self) -> Result<()> {
         if !self.applied {
             debug!("block delay injector not applied; skipping revert");

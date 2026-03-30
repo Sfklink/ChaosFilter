@@ -1,8 +1,17 @@
+//! # Integration Tests
+//!
+//! This module contains integration tests for the `chaosfilter` CLI.
+//! It uses `assert_cmd` and `tempfile` to execute the binary and verify its behavior
+//! against various configuration scenarios.
+
 use assert_cmd::{assert::Assert, cargo};
 use predicates::prelude::predicate;
 use std::io::Write;
 use tempfile::NamedTempFile;
 
+/// Helper to determine the default network interface.
+///
+/// This is used to generate valid configuration files for testing.
 fn get_default_iface() -> Option<String> {
     let output = std::process::Command::new("ip")
         .args(["route", "get", "8.8.8.8"])
@@ -15,7 +24,6 @@ fn get_default_iface() -> Option<String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Look for: "dev <iface>"
     stdout
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -24,6 +32,7 @@ fn get_default_iface() -> Option<String> {
         .map(|w| w[1].to_string())
 }
 
+/// Helper to create a sample TOML configuration string.
 fn create_chaosfilter_toml(iface: &str) -> String {
     return format!(
         r#"
@@ -51,6 +60,7 @@ mem_max = "1G"
     );
 }
 
+/// Helper to print the stdout and stderr of a completed command.
 fn print_output(cmd: Assert) {
     eprint!(
         "----- stdout -----\n{}",
@@ -62,6 +72,7 @@ fn print_output(cmd: Assert) {
     );
 }
 
+/// Verifies that a valid configuration file passes validation.
 #[test]
 fn validate_ok() {
     let iface = get_default_iface().unwrap();
@@ -78,6 +89,7 @@ fn validate_ok() {
     print_output(cmd);
 }
 
+/// Verifies that an invalid configuration file (missing fields) fails validation.
 #[test]
 fn validate_fail() {
     let toml = format!(
@@ -101,6 +113,7 @@ cgroup = "test"
     print_output(cmd);
 }
 
+/// Verifies that validation fails if the specified network interface does not exist.
 #[test]
 fn validate_iface_invalid_iface() {
     let toml = create_chaosfilter_toml("test");
@@ -117,6 +130,9 @@ fn validate_iface_invalid_iface() {
     print_output(cmd);
 }
 
+/// Verifies that a chaos plan can be successfully executed.
+///
+/// Note: This test may require root privileges or specific capabilities to succeed.
 #[test]
 fn run_chaos_plan() {
     let iface = get_default_iface().unwrap();
@@ -133,6 +149,7 @@ fn run_chaos_plan() {
     print_output(cmd);
 }
 
+/// Verifies that running a chaos plan fails if the interface is invalid.
 #[test]
 fn run_chaos_plan_invalid_iface() {
     let toml = create_chaosfilter_toml("test");

@@ -1,7 +1,9 @@
-//! Centralized validation for a [`Plan`].
+//! # Plan Validation
 //!
-//! All injector validators live here. The entry-point to this is
-//! [`validate_plan`], called by `main` for `validate`.
+//! This module provides logic to ensure that a [`Plan`] is valid and can be safely
+//! executed on the current system. It checks for the existence of required resources
+//! (like network interfaces and PIDs) and ensures that configuration values are
+//! within acceptable ranges.
 
 use crate::plans::Plan;
 use anyhow::{anyhow, Result};
@@ -9,7 +11,22 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use tracing::debug;
 
-/// Run every enabled injector validator against `plan`.
+/// Run all enabled injector validators against the provided [`Plan`].
+///
+/// This is the primary entry point for plan validation. It iterates through all
+/// configured injectors and calls their respective validation functions if they are enabled.
+///
+/// # Arguments
+///
+/// * `plan` - The chaos [`Plan`] to validate.
+///
+/// # Returns
+///
+/// Returns `Ok(())` if all enabled injectors pass validation.
+///
+/// # Errors
+///
+/// Returns a consolidated error message if any validation checks fail.
 pub fn validate_plan(plan: &Plan) -> Result<()> {
     let mut errors: Vec<String> = Vec::new();
  
@@ -33,15 +50,26 @@ pub fn validate_plan(plan: &Plan) -> Result<()> {
     }
 }
 
-/// Validates the `network_config` section of a [`Plan`].
+/// Validates the [`crate::plans::NetworkConfig`] section of a [`Plan`].
 ///
-/// Only runs when `network_config.enabled = true`. Checks:
-/// - `target_iface` is present.
-/// - The interface exists on the host (via [`validate_iface_exists`]).
-/// - `loss_percent` is in the range `0.0..=100.0`.
+/// # Arguments
+///
+/// * `plan` - The plan containing the network configuration.
+///
+/// # Returns
+///
+/// Returns `Ok(())` if the configuration is valid or disabled.
+///
+/// # Behavior
+///
+/// If enabled, checks:
+/// 1. `target_iface` is present.
+/// 2. The interface exists on the host (via `ip link show`).
+/// 3. `loss_percent` is within the range [0.0, 100.0].
 ///
 /// # Errors
-/// Returns a descriptive error for each condition above.
+///
+/// Returns an error if any of the above checks fail.
 pub fn validate_network_config(plan: &Plan) -> Result<()> {
     let config = &plan.injectors.network_config;
  
@@ -67,14 +95,26 @@ pub fn validate_network_config(plan: &Plan) -> Result<()> {
     Ok(())
 }
 
-/// Validates the [`FdConfig`][crate::plans::FdConfig] section of a [`Plan`].
+/// Validates the [`crate::plans::FileSystemConfig`] section of a [`Plan`].
 ///
-/// It is recommended that you run this before `apply` so you may get a clear 
-/// error message instead of a mid-run failure.
+/// # Arguments
+///
+/// * `plan` - The plan containing the filesystem configuration.
+///
+/// # Returns
+///
+/// Returns `Ok(())` if the configuration is valid or disabled.
+///
+/// # Behavior
+///
+/// If enabled, checks:
+/// 1. `target_pid` is present.
+/// 2. The target PID exists in `/proc`.
+/// 3. `soft_limit` is less than or equal to `hard_limit`.
+///
 /// # Errors
-/// - `fd_config.enabled = true` but `targets.cgroup` is absent.
-/// - The resolved cgroup directory doesn't exist.
-/// - `soft_limit > hard_limit` (kernel would reject this anyway)
+///
+/// Returns an error if any of the above checks fail.
 pub fn validate_filesystem_config(plan: &Plan) -> Result<()> {
     let config = &plan.injectors.filesystem_config;
 
@@ -100,15 +140,26 @@ pub fn validate_filesystem_config(plan: &Plan) -> Result<()> {
     Ok(())
 }
 
-/// Validates the `filesystem_config` (File Descriptor exhaustion) section of a [`Plan`].
+/// Validates the [`crate::plans::MemoryConfig`] section of a [`Plan`].
 ///
-/// Only runs when `filesystem_config.enabled = true`. Checks:
-/// - `target_pid` is present.
-/// - The PID exists in `/proc`.
-/// - `soft_limit <= hard_limit`.
+/// # Arguments
+///
+/// * `plan` - The plan containing the memory configuration.
+///
+/// # Returns
+///
+/// Returns `Ok(())` if the configuration is valid or disabled.
+///
+/// # Behavior
+///
+/// If enabled, checks:
+/// 1. `target_pid` is present.
+/// 2. The target PID exists in `/proc`.
+/// 3. Cgroup v2 is supported by the kernel and mounted at `/sys/fs/cgroup`.
 ///
 /// # Errors
-/// Returns a descriptive error for each condition above.
+///
+/// Returns an error if any of the above checks fail.
 pub fn validate_memory_config(plan: &Plan) -> Result<()> {
     let config = &plan.injectors.memory_config;
 
@@ -124,23 +175,28 @@ pub fn validate_memory_config(plan: &Plan) -> Result<()> {
     validate_pid_exists(pid)?;
     validate_cgroup_v2()?;
 
-    if !Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
-        return Err(anyhow!(
-            "cgroup v2 not detected: /sys/fs/cgroup/cgroup.controllers missing"
-        ));
-    }
-
     Ok(())
 }
 
-/// Validates the `block_config` section of a [`Plan`].
+/// Validates the [`crate::plans::BlockConfig`] section of a [`Plan`].
 ///
-/// Only runs when `block_config.enabled = true`. Checks:
-/// - `device` is present and exists on the filesystem.
-/// - The cgroup v2 IO controller is enabled at the root subtree.
+/// # Arguments
+///
+/// * `plan` - The plan containing the block I/O configuration.
+///
+/// # Returns
+///
+/// Returns `Ok(())` if the configuration is valid or disabled.
+///
+/// # Behavior
+///
+/// If enabled, checks:
+/// 1. `device` is present and the path exists.
+/// 2. The `io` controller is enabled in the root cgroup's `subtree_control`.
 ///
 /// # Errors
-/// Returns a descriptive error for each condition above.
+///
+/// Returns an error if any of the above checks fail.
 pub fn validate_block_config(plan: &Plan) -> Result<()> {
     if !plan.injectors.block_config.enabled {
         debug!("block_config not enabled; skipping");
@@ -177,7 +233,7 @@ pub fn validate_block_config(plan: &Plan) -> Result<()> {
     Ok(())
 }
 
-// Helpers
+/// Helper to check if a network interface exists.
 fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
     let Some(iface) = iface else {
         debug!("iface not provided; skipping");
@@ -197,6 +253,7 @@ fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Helper to check if a process ID exists in `/proc`.
 fn validate_pid_exists(pid: u32) -> Result<()> {
     if !Path::new(&format!("/proc/{pid}")).exists() {
         return Err(anyhow!("PID does not exist: {pid}"));
@@ -204,6 +261,7 @@ fn validate_pid_exists(pid: u32) -> Result<()> {
     Ok(())
 }
 
+/// Helper to check if cgroup v2 is enabled and mounted.
 fn validate_cgroup_v2() -> Result<()> {
     if !Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
         return Err(anyhow!(
