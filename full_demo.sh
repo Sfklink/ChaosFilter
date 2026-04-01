@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ChaosFilter Full Demonstration
 #
-# YOU MUST RUN DEMO IN THE REPOSITORY ROOT DIRECTORY 
+# YOU MUST RUN DEMO IN THE REPOSITORY ROOT DIRECTORY
 #
 # This demo gives the user a guided walkthrough of the current working systems in ChaosFilter
 # Each subsystem is tested independently of the others so the user can visibly see what is happening
@@ -19,9 +19,9 @@ set -euo pipefail
 # Makes sure the binary can always be found
 export PATH="$HOME/.cargo/bin:$PATH"
 
-# need_cmd 
-#   Helper function that checks to make sure all required programs are installed and prints an error if one is missing 
-#   Checks for: cargo, grep/sed, and python3 
+# need_cmd
+#   Helper function that checks to make sure all required programs are installed and prints an error if one is missing
+#   Checks for: cargo, grep/sed, python3, and stress-ng
 need_cmd() {
     command -v "$1" >/dev/null 2>&1 || {
         echo "Missing required command: $1"
@@ -32,11 +32,12 @@ need_cmd cargo
 need_cmd python3
 need_cmd grep
 need_cmd sed
+need_cmd stress-ng
 
 
 # pause
 #   Helper function that is used throughout the demo to hold script execution until user hits enter
-#   Also pauses and resumes the iperf print out if running so it looks good
+#   Also pauses and resumes the ping print out if running so it looks good
 pause() {
     echo
     read -r -p "Press Enter to continue..." _
@@ -76,10 +77,10 @@ PY
 # Path to the compiled Chaosfilter binary
 CHAOS_BIN="$(command -v chaosfilter || true)"
 
-# Initalize IPERF_PID for use later 
-IPERF_PID=""
+# Initialize PING_PID for use later
+PING_PID=""
 
-# Initalize both TARGET and CHAOS_PID for use later 
+# Initalize both TARGET and CHAOS_PID for use later
 CHAOS_PID=""
 TARGET_PID=""
 
@@ -92,28 +93,27 @@ echo "Initalizing sudo if needed"
 sudo -v
 pause
 
-# Installing ChaosFilter 
+# Installing ChaosFilter
 #   Runs 'cargo install --path' to get the path to the binary with force to rebuild if it already exists
 echo "Step 0 - Installing ChaosFilter:"
 echo "cargo install --path chaosfilter --force"
 cargo install --path chaosfilter --force
 pause
 
-# cleanup 
+# cleanup
 #   Handler that makes sure anything started by the demo stops when the demo is over or is ended early
 cleanup() {
     echo
     echo "Cleanup:"
     [[ -n "${CPU_PID:-}" ]] && kill "$CPU_PID" 2>/dev/null || true
     [[ -n "${MEM_PID:-}" ]] && kill "$MEM_PID" 2>/dev/null || true
-    [[ -n "${IPERF_PID:-}" ]] && kill "$IPERF_PID" 2>/dev/null || true
+    [[ -n "${PING_PID:-}" ]] && kill "$PING_PID" 2>/dev/null || true
     [[ -n "${CHAOS_PID:-}" ]] && kill "$CHAOS_PID" 2>/dev/null || true
-    pkill -f "iperf3 -s" 2>/dev/null || true
 }
 trap cleanup EXIT
 
 
-# Config file updates 
+# Config file updates
 #   Enables all the sections execpt for block chaos and initializes all the variables for the chaos
 set_config() {
     TARGET_PID=$1
@@ -143,8 +143,8 @@ move_pid = true
 enable = ["cpu", "memory"]
 cpu_max = "20000 100000"
 cpu_weight = 200
-mem_max = "400M"
-mem_high = "300M"
+mem_max = "300M"
+mem_high = "200M"
 swap_max = "0"
 
 EOF
@@ -153,7 +153,7 @@ echo "demo_config.toml updated for full demo"
 }
 
 # get_config_value
-#   Reads from the config at a specific line that is passed when called so I can tell the user exactly 
+#   Reads from the config at a specific line that is passed when called so I can tell the user exactly
 #   what is about to happen when the chaos runs
 get_config_value() {
     local key="$1"
@@ -215,19 +215,38 @@ get_mem_kb() {
     fi
 }
 
+# Gets the cgroup memory in MB for the actual process cgroup path
+get_mem_cgroup_mb() {
+    local cgroup_rel=""
+    cgroup_rel=$(awk -F: '$1=="0" {print $3}' /proc/"$MEM_PID"/cgroup 2>/dev/null || true)
+
+    if [[ -n "$cgroup_rel" && -f "/sys/fs/cgroup${cgroup_rel}/memory.current" ]]; then
+        awk '{print int($1 / 1024 / 1024)}' "/sys/fs/cgroup${cgroup_rel}/memory.current"
+    else
+        echo 0
+    fi
+}
+
 # Watches the memory in real time while chaos is active
 monitor_mem() {
-    while kill -0 "$CHAOS_PID" 2>/dev/null; do
+    # Convert values like "200M" -> 200
+    HIGH_MB=$(echo "$MEM_HIGH" | sed 's/M//')
+    MAX_MB=$(echo "$MEM_MAX" | sed 's/M//')
 
-        # process memory (actual usage)
+    while kill -0 "$CHAOS_PID" 2>/dev/null; do
         MEM_KB=$(get_mem_kb)
         MEM_MB=$((MEM_KB / 1024))
 
-        # cgroup memory limit (mem_high or mem_max)
-        CGROUP_MEM=$(cat /sys/fs/cgroup/chaosfilter/memory.current 2>/dev/null || echo 0)
-        CGROUP_MB=$((CGROUP_MEM / 1024 / 1024))
+        CGROUP_MB=$(get_mem_cgroup_mb)
 
-        printf "Memory (process): %4d MB | cgroup: %4d MB\n" "$MEM_MB" "$CGROUP_MB"
+        if (( CGROUP_MB >= HIGH_MB )); then
+            STATE="LIMIT ENFORCED"
+        else
+            STATE="GROWING"
+        fi
+
+        printf "Memory (process): %4d MB | cgroup: %4d MB (%s)\n" \
+            "$MEM_MB" "$CGROUP_MB" "$STATE"
 
         sleep 1
     done
@@ -249,22 +268,33 @@ stdbuf -oL ping -O 8.8.8.8 &
 PING_PID=$!
 kill -STOP "$PING_PID"
 
+# Show baseline first
+echo "Network Baseline"
+echo "You will first see normal traffic before chaos is applied"
+pause
+kill -CONT "$PING_PID"
+sleep 10
+kill -STOP "$PING_PID"
 
 # Get the chaos values
 DELAY=$(get_config_value "delay_ms")
 LOSS=$(get_config_value "loss_percent")
 
 # Apply chaos
+echo
 echo "Applying ChaosFilter (NETWORK)..."
-echo "ChaosFilter will inject ${DELAY}ms of delay and ${LOSS}% packet loss"
-echo "You will see the Network before, during, and after ChaosFilter"
+echo "ChaosFilter will inject ${DELAY}ms delay and ${LOSS}% loss"
+echo "You will now see the network during chaos"
 pause
 echo "sudo -E $CHAOS_BIN chaos --config demo_config.toml"
-echo "Loading..."
+
 sudo -E "$CHAOS_BIN" chaos --config demo_config.toml &
-sleep 10
 CHAOS_PID=$!
+
+# Let chaos attach before traffic resumes
+sleep 1
 kill -CONT "$PING_PID"
+
 wait "$CHAOS_PID"
 CHAOS_PID=""
 
@@ -273,7 +303,6 @@ kill "$PING_PID" 2>/dev/null || true
 wait "$PING_PID" 2>/dev/null || true
 PING_PID=""
 echo "Network Chaos Done"
-echo
 pause
 
 # CPU chaos section
@@ -301,16 +330,13 @@ for _ in {1..10}; do
     PREV=$CURR
     CPU=$((DELTA * 100 / CLK_TCK))
 
-    # clamp
     ((CPU > 100)) && CPU=100
     ((CPU < 0)) && CPU=0
 
-    # ps value (sum children)
     PS_CPU=$(ps --ppid "$CPU_PID" -o %cpu= 2>/dev/null | awk '{s+=$1} END {printf "%d", s}')
     [[ -z "$PS_CPU" ]] && PS_CPU=0
 
     printf "CPU (cgroup): %3d%% | ps: %3d%%\n" "$CPU" "$PS_CPU"
-
     sleep 1
 done
 
@@ -321,12 +347,12 @@ CPU_WEIGHT=$(get_config_value "cpu_weight")
 # Runs ChaosFilter and the real-time results
 echo
 echo "Applying ChaosFilter (CPU)..."
-echo "sudo -E "$CHAOS_BIN" chaos --config demo_config.toml"
-echo "ChaosFilter will restrict the process to a limited share of CPU time (quota: $CPU_MAX, priority weight: $CPU_WEIGHT)"
+echo "ChaosFilter will restrict CPU (quota: $CPU_MAX, weight: $CPU_WEIGHT)"
 pause
 
 sudo -E "$CHAOS_BIN" chaos --config demo_config.toml &
 CHAOS_PID=$!
+
 monitor_cpu
 wait "$CHAOS_PID"
 CHAOS_PID=""
@@ -344,53 +370,26 @@ echo "Starting workload and setting config"
 mem_workload
 sleep 1
 set_config "$MEM_PID"
-echo
+
 MEM_MAX=$(get_config_value "mem_max")
 MEM_HIGH=$(get_config_value "mem_high")
 
 # Start chaos
+echo
 echo "Applying ChaosFilter (MEMORY)..."
-echo "sudo -E $CHAOS_BIN chaos --config demo_config.toml"
 echo "ChaosFilter will constrain memory (soft limit: $MEM_HIGH, hard cap: $MEM_MAX)"
-echo "Chaos active: Memory growth will be constrained"
 pause
 
 sudo -E "$CHAOS_BIN" chaos --config demo_config.toml &
 CHAOS_PID=$!
 
-# Monitor immediately (no baseline phase)
-while kill -0 "$CHAOS_PID" 2>/dev/null; do
-
-    # Process memory
-    MEM_KB=$(get_mem_kb)
-    MEM_MB=$((MEM_KB / 1024))
-
-    # Cgroup memory usage
-    CGROUP_MEM=$(cat /sys/fs/cgroup/chaosfilter/memory.current 2>/dev/null || echo 0)
-    CGROUP_MB=$((CGROUP_MEM / 1024 / 1024))
-
-    # Detect limit behavior
-    if (( CGROUP_MB >= 300 )); then
-        STATE="LIMIT ENFORCED"
-    else
-        STATE="GROWING"
-    fi
-
-    printf "Memory (process): %4d MB | cgroup: %4d MB  (%s)\n" \
-        "$MEM_MB" "$CGROUP_MB" "$STATE"
-
-    sleep 1
-done
+monitor_mem
 
 wait "$CHAOS_PID"
 CHAOS_PID=""
 
-echo
-echo "ChaosFilter removed → Memory can grow freely again"
 echo "Memory Chaos Done"
-pause
 
 echo "----------------------------------"
 echo "ChaosFilter Full Demo Complete"
-echo "Cleaning up..."
 echo "----------------------------------"
