@@ -393,3 +393,9 @@ echo "Memory Chaos Done"
 echo "----------------------------------"
 echo "ChaosFilter Full Demo Complete"
 echo "----------------------------------"
+
+
+
+## For Ethan ##
+# upadte the config
+# add the chaos application after memory
