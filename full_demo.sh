@@ -21,7 +21,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 # need_cmd 
 #   Helper function that checks to make sure all required programs are installed and prints an error if one is missing 
-#   Checks for: cargo, iperf3, grep/sed, and python3 
+#   Checks for: cargo, grep/sed, and python3 
 need_cmd() {
     command -v "$1" >/dev/null 2>&1 || {
         echo "Missing required command: $1"
@@ -29,7 +29,6 @@ need_cmd() {
     }
 }
 need_cmd cargo
-need_cmd iperf3
 need_cmd python3
 need_cmd grep
 need_cmd sed
@@ -41,13 +40,16 @@ need_cmd sed
 pause() {
     echo
     read -r -p "Press Enter to continue..." _
+    echo
 }
 
 # Apply a work load to the CPU
-echo "Starting Workload Process..."
-yes > /dev/null &
-CPU_PID=$!
+#   Weird layout for formatting reasons
+echo "Starting CPU Workload..."
 pause
+stress-ng --cpu 1 --cpu-method loop --cpu-load 100 --timeout 0 > /dev/null 2>&1 &
+CPU_PID=$!
+
 
 # Apply a workload to memory
 mem_workload() {
@@ -160,7 +162,23 @@ get_config_value() {
 
 # Gets the tick rate for the cpu
 get_cpu_ticks() {
-    awk '{print $14 + $15}' /proc/$CPU_PID/stat
+    local total=0
+
+    # include parent + all children
+    for pid in $(pgrep -P "$CPU_PID"); do
+        if [[ -f /proc/$pid/stat ]]; then
+            ticks=$(awk '{print $14 + $15}' /proc/$pid/stat)
+            total=$((total + ticks))
+        fi
+    done
+
+    # include parent itself
+    if [[ -f /proc/$CPU_PID/stat ]]; then
+        ticks=$(awk '{print $14 + $15}' /proc/$CPU_PID/stat)
+        total=$((total + ticks))
+    fi
+
+    echo "$total"
 }
 
 # Watches the CPU in real time while chaos is active
@@ -175,8 +193,15 @@ monitor_cpu() {
         PREV=$CURR
 
         CPU=$((DELTA * 100 / CLK_TCK))
+        ((CPU > 100)) && CPU=100
+        ((CPU < 0)) && CPU=0
 
-        printf "CPU: %3d%%\n" "$CPU"
+        # ps value (for credibility)
+        PS_CPU=$(ps --ppid "$CPU_PID" -o %cpu= 2>/dev/null | awk '{s+=$1} END {printf "%d", s}')
+        [[ -z "$PS_CPU" ]] && PS_CPU=0
+
+        printf "CPU (cgroup): %3d%% | ps: %3d%%\n" "$CPU" "$PS_CPU"
+
         sleep 1
     done
 }
@@ -193,9 +218,17 @@ get_mem_kb() {
 # Watches the memory in real time while chaos is active
 monitor_mem() {
     while kill -0 "$CHAOS_PID" 2>/dev/null; do
-        MEM=$(get_mem_kb)
-        MEM_MB=$((MEM / 1024))
-        printf "Memory: %4d MB\n" "$MEM_MB"    
+
+        # process memory (actual usage)
+        MEM_KB=$(get_mem_kb)
+        MEM_MB=$((MEM_KB / 1024))
+
+        # cgroup memory limit (mem_high or mem_max)
+        CGROUP_MEM=$(cat /sys/fs/cgroup/chaosfilter/memory.current 2>/dev/null || echo 0)
+        CGROUP_MB=$((CGROUP_MEM / 1024 / 1024))
+
+        printf "Memory (process): %4d MB | cgroup: %4d MB\n" "$MEM_MB" "$CGROUP_MB"
+
         sleep 1
     done
 }
@@ -211,45 +244,34 @@ pause
 # Build the config for chaos
 set_config "$CPU_PID"
 
-# Removes any potentially existing iperf servers
-echo "Checking for and removing existing iperf servers..."
-pkill -f "iperf3 -s" 2>/dev/null || true
-echo
+# Start continuous ping
+stdbuf -oL ping -O 8.8.8.8 &
+PING_PID=$!
+kill -STOP "$PING_PID"
 
-# Creates the iperf server for the demo
-echo "Starting iperf server..."
-iperf3 -s > /dev/null &
-sleep 2
-echo
-
-# Applied the load to the network for visible network chaos
-echo "Generating network traffic..."
-stdbuf -oL -eL iperf3 -c 127.0.0.1 -P 2 -i 1 -t 0 &
-IPERF_PID=$!
-sleep 6
-kill -STOP "$IPERF_PID"
-pause
 
 # Get the chaos values
 DELAY=$(get_config_value "delay_ms")
 LOSS=$(get_config_value "loss_percent")
 
-# Run the chaosfilter
+# Apply chaos
 echo "Applying ChaosFilter (NETWORK)..."
 echo "ChaosFilter will inject ${DELAY}ms of delay and ${LOSS}% packet loss"
+echo "You will see the Network before, during, and after ChaosFilter"
 pause
 echo "sudo -E $CHAOS_BIN chaos --config demo_config.toml"
-kill -CONT "$IPERF_PID"
+echo "Loading..."
 sudo -E "$CHAOS_BIN" chaos --config demo_config.toml &
+sleep 10
 CHAOS_PID=$!
+kill -CONT "$PING_PID"
 wait "$CHAOS_PID"
 CHAOS_PID=""
 
-# Stops the network load and iperf
-kill "$IPERF_PID" 2>/dev/null || true
-wait "$IPERF_PID" 2>/dev/null || true
-IPERF_PID=""
-echo
+# Stop ping
+kill "$PING_PID" 2>/dev/null || true
+wait "$PING_PID" 2>/dev/null || true
+PING_PID=""
 echo "Network Chaos Done"
 echo
 pause
@@ -261,10 +283,14 @@ echo "----------------------------------"
 pause
 
 # Config setup
-set_config "$CPU_PID"
+sleep 1
+CPU_CHILD_PID=$(pgrep -P "$CPU_PID" | head -n 1)
+set_config "$CPU_CHILD_PID"
+echo
 
 # Baseline CPU value
 echo "CPU Baseline"
+echo "Running CPU-intensive workload..."
 PREV=$(get_cpu_ticks)
 CLK_TCK=$(getconf CLK_TCK)
 sleep 1
@@ -274,26 +300,36 @@ for _ in {1..10}; do
     DELTA=$((CURR - PREV))
     PREV=$CURR
     CPU=$((DELTA * 100 / CLK_TCK))
-    printf "CPU: %3d%%\n" "$CPU"
+
+    # clamp
+    ((CPU > 100)) && CPU=100
+    ((CPU < 0)) && CPU=0
+
+    # ps value (sum children)
+    PS_CPU=$(ps --ppid "$CPU_PID" -o %cpu= 2>/dev/null | awk '{s+=$1} END {printf "%d", s}')
+    [[ -z "$PS_CPU" ]] && PS_CPU=0
+
+    printf "CPU (cgroup): %3d%% | ps: %3d%%\n" "$CPU" "$PS_CPU"
+
     sleep 1
 done
-pause
 
 # Get the chaos values
 CPU_MAX=$(get_config_value "cpu_max")
 CPU_WEIGHT=$(get_config_value "cpu_weight")
 
 # Runs ChaosFilter and the real-time results
+echo
 echo "Applying ChaosFilter (CPU)..."
 echo "sudo -E "$CHAOS_BIN" chaos --config demo_config.toml"
 echo "ChaosFilter will restrict the process to a limited share of CPU time (quota: $CPU_MAX, priority weight: $CPU_WEIGHT)"
 pause
+
 sudo -E "$CHAOS_BIN" chaos --config demo_config.toml &
 CHAOS_PID=$!
 monitor_cpu
 wait "$CHAOS_PID"
 CHAOS_PID=""
-echo
 echo "CPU Chaos Done"
 pause
 
@@ -303,27 +339,54 @@ echo "Memory Chaos Demo"
 echo "----------------------------------"
 pause
 
-# Memory workload and build the config for chaos
+# Start workload and config
 echo "Starting workload and setting config"
 mem_workload
+sleep 1
 set_config "$MEM_PID"
 echo
-
-# Get the chaos values
 MEM_MAX=$(get_config_value "mem_max")
 MEM_HIGH=$(get_config_value "mem_high")
 
-# Runs ChaosFilter and shows real-time results
+# Start chaos
 echo "Applying ChaosFilter (MEMORY)..."
-echo "sudo -E "$CHAOS_BIN" chaos --config demo_config.toml"
-echo "ChaosFilter will constrain the process's memory usage (soft limit: $MEM_HIGH, hard cap: $MEM_MAX)"
+echo "sudo -E $CHAOS_BIN chaos --config demo_config.toml"
+echo "ChaosFilter will constrain memory (soft limit: $MEM_HIGH, hard cap: $MEM_MAX)"
+echo "Chaos active: Memory growth will be constrained"
 pause
+
 sudo -E "$CHAOS_BIN" chaos --config demo_config.toml &
 CHAOS_PID=$!
-monitor_mem
+
+# Monitor immediately (no baseline phase)
+while kill -0 "$CHAOS_PID" 2>/dev/null; do
+
+    # Process memory
+    MEM_KB=$(get_mem_kb)
+    MEM_MB=$((MEM_KB / 1024))
+
+    # Cgroup memory usage
+    CGROUP_MEM=$(cat /sys/fs/cgroup/chaosfilter/memory.current 2>/dev/null || echo 0)
+    CGROUP_MB=$((CGROUP_MEM / 1024 / 1024))
+
+    # Detect limit behavior
+    if (( CGROUP_MB >= 300 )); then
+        STATE="LIMIT ENFORCED"
+    else
+        STATE="GROWING"
+    fi
+
+    printf "Memory (process): %4d MB | cgroup: %4d MB  (%s)\n" \
+        "$MEM_MB" "$CGROUP_MB" "$STATE"
+
+    sleep 1
+done
+
 wait "$CHAOS_PID"
 CHAOS_PID=""
+
 echo
+echo "ChaosFilter removed → Memory can grow freely again"
 echo "Memory Chaos Done"
 pause
 
