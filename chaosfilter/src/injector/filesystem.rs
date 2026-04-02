@@ -16,7 +16,7 @@
 use crate::{injector::ChaosInjector, plans::Plan, validate::{resolve_cgroup_path, validate_filesystem_config}};
 use anyhow::{anyhow, Result, Context};
 use libc::{self, rlimit64, RLIMIT_NOFILE};
-use std::{fs, path::{Path, PathBuf}};
+use std::{fs, path::Path};
 use tracing::{info, warn, debug};
 
 /// Snapshot of a process's original file descriptor limits.
@@ -68,13 +68,13 @@ impl ChaosInjector for FilesystemInjector {
     ///
     /// Returns an error if the cgroup cannot be read or if internal validation fails.
     /// Individual `prlimit64` failures are logged as warnings.
-    fn apply(&mut self, plan: &Plan) -> Result<()> {
+    fn apply(&mut self, plan: Plan) -> Result<()> {
         if !plan.injectors.filesystem_config.enabled {
             debug!("filesystem injector not enabled; skipping");
             return Ok(());
         }
 
-        validate_filesystem_config(plan)?;
+        validate_filesystem_config(&plan)?;
 
         let cg_rel = plan
             .injectors

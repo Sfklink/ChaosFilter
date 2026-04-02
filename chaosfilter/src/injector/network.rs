@@ -48,6 +48,14 @@ pub struct NetworkInjector {
     pub ebpf_handle: Option<EbpfHandle>,
 }
 
+impl NetworkInjector {
+    /// Marks the injector as successfully applied.
+    fn mark_apply_success(&mut self, iface: &str) {
+        self.applied = true;
+        self.iface = Some(iface.to_string());
+    }
+}
+
 /// Traffic steering strategies for network degradation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FilterMode {
@@ -86,32 +94,38 @@ impl ChaosInjector for NetworkInjector {
     /// # Errors
     ///
     /// Returns an error if any `tc` command fails or if the eBPF program cannot be loaded.
-    fn apply(&mut self, plan: &Plan, iface: &str) -> Result<()> {
+    fn apply(&mut self, plan: Plan) -> Result<()> {
+        let iface_owned = plan.injectors.network_config.target_iface
+            .ok_or_else(|| anyhow!("network target interface not specified"))?;
+        let iface = iface_owned.as_str();
         let delay_ms = plan.injectors.network_config.delay_ms;
         let loss_percent = plan.injectors.network_config.loss_percent;
         let network_cgroup_target = &plan.injectors.network_config.network_ebpf_cgroup;
 
         info!(
-            iface,
+            %iface,
             delay_ms,
             loss_percent,
             "applying netem qdisc"
             );
-        Self::ensure_root_prio_qdisc(iface)?;
-        Self::ensure_child_netem_qdisc(iface, delay_ms, loss_percent)?;
-        Self::show_qdisc_state(iface);
+        ensure_root_prio_qdisc(iface)?;
+        ensure_child_netem_qdisc(iface, delay_ms, loss_percent)?;
+        show_qdisc_state(iface);
 
-        match Self::select_filter_mode(network_cgroup_target) {
+        match select_filter_mode(network_cgroup_target) {
             FilterMode::MatchAll => {
-                Self::install_match_all_filter(iface)?;
+                install_match_all_filter(iface)?;
             }
             FilterMode::EbpfMarked => {
-                Self::install_fw_filter(iface)?;
-                let handle = Self::attach_classifier(iface, network_cgroup_target)?;
+                install_fw_filter(iface)?;
+                let handle = attach_classifier(iface, network_cgroup_target)?;
                 self.ebpf_handle = Some(handle);
             }
         }
 
+        self.duration_s = plan.schedule.duration_s;
+        self.netem_delay_ms = delay_ms as i32;
+        self.netem_loss_percent = loss_percent;
         self.mark_apply_success(iface);
 
         debug!("apply() complete");
@@ -127,7 +141,7 @@ impl ChaosInjector for NetworkInjector {
     /// # Behavior
     ///
     /// - If not applied, it does nothing.
-    /// - Otherwise, calls [`Self::create_restore_root`].
+    /// - Otherwise, calls [`create_restore_root`].
     ///
     /// # Errors
     ///
@@ -140,12 +154,15 @@ impl ChaosInjector for NetworkInjector {
 
         let iface = self.iface.as_deref().ok_or_else(|| anyhow!("internal error: iface missing during revert"))?;
 
-        Self::create_restore_root(iface);
-        Self::show_qdisc_state(iface);
+        create_restore_root(iface);
+        show_qdisc_state(iface);
 
         self.ebpf_handle = None;
         self.applied = false;
         self.iface = None;
+        self.duration_s = 0;
+        self.netem_delay_ms = 0;
+        self.netem_loss_percent = 0.0;
 
         Ok(())
     }
@@ -387,12 +404,6 @@ pub fn attach_classifier(iface: &str, cgroups: &[u64]) -> Result<EbpfHandle> {
     Ok(EbpfHandle {
         _ebpf: ebpf,
     })
-}
-
-/// Marks the injector as successfully applied.
-fn mark_apply_success(&mut self, iface: &str) {
-    self.applied = true;
-    self.iface = Some(iface.to_string());
 }
 
 /// Restores the root qdisc to a baseline state (`fq_codel`).
