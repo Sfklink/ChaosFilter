@@ -50,6 +50,19 @@ pub fn validate_plan(plan: &Plan) -> Result<()> {
     }
 }
 
+/// Resolves a relative cgroup path to an absolute path in `/sys/fs/cgroup`.
+///
+/// # Arguments
+///
+/// * `rel` - The relative cgroup path.
+///
+/// # Returns
+///
+/// Returns a [`std::path::PathBuf`] pointing to the absolute cgroup directory.
+pub fn resolve_cgroup_path(rel: &str) -> std::path::PathBuf {
+    std::path::Path::new("/sys/fs/cgroup").join(rel.trim_start_matches('/'))
+}
+
 /// Validates the [`crate::plans::NetworkConfig`] section of a [`Plan`].
 ///
 /// # Arguments

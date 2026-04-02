@@ -13,10 +13,10 @@
 //! syscall returns `EMFILE`. While the kernel does not kill the process,
 //! many applications will crash or malfunction if they cannot open new files.
 
-use crate::{plans::Plan, validate::validate_filesystem_config};
+use crate::{injector::ChaosInjector, plans::Plan, validate::{resolve_cgroup_path, validate_filesystem_config}};
 use anyhow::{anyhow, Result, Context};
 use libc::{self, rlimit64, RLIMIT_NOFILE};
-use std::{fs, path::{Path, PathBuf}};
+use std::{fs, path::Path};
 use tracing::{info, warn, debug};
 
 /// Snapshot of a process's original file descriptor limits.
@@ -38,7 +38,11 @@ pub struct FilesystemInjector {
     saved: Vec<SavedLimitConfig>
 }
 
-impl FilesystemInjector {
+impl ChaosInjector for FilesystemInjector {
+    fn name(&self) -> &'static str {
+        "filesystem"
+    }
+
     /// Applies reduced `RLIMIT_NOFILE` limits to every PID in the target cgroup.
     ///
     /// # Arguments
@@ -64,13 +68,13 @@ impl FilesystemInjector {
     ///
     /// Returns an error if the cgroup cannot be read or if internal validation fails.
     /// Individual `prlimit64` failures are logged as warnings.
-    pub fn apply(&mut self, plan: &Plan) -> Result<()> {
+    fn apply(&mut self, plan: Plan) -> Result<()> {
         if !plan.injectors.filesystem_config.enabled {
             debug!("filesystem injector not enabled; skipping");
             return Ok(());
         }
 
-        validate_filesystem_config(plan)?;
+        validate_filesystem_config(&plan)?;
 
         let cg_rel = plan
             .injectors
@@ -80,7 +84,7 @@ impl FilesystemInjector {
             .to_string();
 
 
-        let cgroup = resolve_cgroup_path(&*cg_rel);
+        let cgroup = resolve_cgroup_path(&cg_rel);
         let config = &plan.injectors.filesystem_config;
 
         let pids = read_cgroup_pids(&cgroup)
@@ -146,7 +150,7 @@ impl FilesystemInjector {
     /// # Side Effects
     ///
     /// - Restores the resource limits of external processes.
-    pub fn revert(&mut self) -> Result<()> {
+    fn revert(&mut self) -> Result<()> {
         if !self.applied {
             return Ok(());
         }
@@ -176,30 +180,6 @@ impl FilesystemInjector {
         self.applied = false;
         self.saved.clear();
         Ok(())
-    }
-}
-
-impl crate::injector::ChaosInjector for FilesystemInjector {
-    fn name(&self) -> &'static str {
-        "filesystem"
-    }
-
-    fn apply(&mut self, plan: Plan) -> Result<()> {
-        FilesystemInjector::apply(self, &plan)
-    }
-
-    fn revert(&mut self) -> Result<()> {
-        FilesystemInjector::revert(self)
-    }
-}
-
-/// Resolves a relative cgroup path against the system root.
-fn resolve_cgroup_path(arg: &str) -> PathBuf {
-    let path = PathBuf::from(arg);
-    if path.is_absolute() {
-        path
-    } else {
-        Path::new("/sys/fs/cgroup").join(path)
     }
 }
 
@@ -309,18 +289,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_cgroup_path_absolute() {
-        let path = resolve_cgroup_path("/tmp/test");
-        assert_eq!(path, PathBuf::from("/tmp/test"));
-    }
-
-    #[test]
-    fn resolve_cgroup_path_relative() {
-        let path = resolve_cgroup_path("test");
-        assert_eq!(path, Path::new("/sys/fs/cgroup").join("test"));
-    }
-
-    #[test]
     fn read_cgroup_pids_parse() {
         let directory = TempDir::new().unwrap();
         let procs = directory.path().join("cgroup.procs");
@@ -379,7 +347,7 @@ mod tests {
     #[test]
     fn not_applied_when_disabled() {
         let mut injector = FilesystemInjector::default();
-        injector.apply(&base_plan()).unwrap();
+        injector.apply(base_plan()).unwrap();
         assert!(!injector.applied);
     }
 
