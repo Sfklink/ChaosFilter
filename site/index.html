@@ -5,11 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="ChaosFilter is an eBPF-powered chaos engineering tool for Linux. This site explains what it is, how to install it, how to run it, and how to generate Cargo API docs."
+      content="ChaosFilter is an eBPF-powered chaos engineering tool for Linux: controlled network impairment and resource stress, driven by a TOML config."
     />
     <title>ChaosFilter — Project Overview</title>
     <link rel="stylesheet" href="./styles.css" />
-    <script defer src="./script.js"></script>
   </head>
   <body>
     <a class="skip-link" href="#content">Skip to content</a>
@@ -30,6 +29,14 @@
           <a href="#usage">Usage</a>
           <a href="#config">Config</a>
           <a href="#docs">Docs</a>
+          <a
+            class="nav__github"
+            href="https://github.com/Sfklink/ChaosFilter"
+            rel="noopener noreferrer"
+            target="_blank"
+            aria-label="ChaosFilter on GitHub"
+            >GitHub</a
+          >
         </nav>
       </div>
     </header>
@@ -41,12 +48,18 @@
             <h1>ChaosFilter</h1>
             <p class="lede">
               A Rust workspace that combines a CLI controller with an eBPF program (via Aya) to inject
-              controlled chaos into Linux systems—starting with network impairment (delay/loss) and
-              resource stress controls.
+              controlled chaos into Linux systems—such as network impairment (delay/loss) and resource stress
+              controls.
             </p>
             <div class="cta-row">
               <a class="btn btn--primary" href="#usage">Run it</a>
-              <a class="btn btn--ghost" href="#docs">Generate API docs</a>
+              <a
+                class="btn btn--ghost"
+                href="https://github.com/Sfklink/ChaosFilter"
+                rel="noopener noreferrer"
+                target="_blank"
+                >View on GitHub</a
+              >
             </div>
             <div class="hero__badges" aria-label="Highlights">
               <span class="pill">Rust 2024 edition</span>
@@ -62,10 +75,6 @@
               <li><span class="mono">chaosfilter-ebpf/</span> — eBPF program</li>
               <li><span class="mono">chaosfilter-common/</span> — shared types</li>
             </ul>
-            <div class="callout">
-              This site is static: open <span class="mono">site/index.html</span> directly, or run the
-              included server script for nicer routing.
-            </div>
           </div>
         </div>
       </section>
@@ -78,8 +87,8 @@
               <div class="card__title">What it does</div>
               <p>
                 ChaosFilter is built to <strong>inject failure conditions</strong> in a controlled,
-                repeatable way. It’s aimed at testing resilience (timeouts, retries, backpressure,
-                fallbacks) under real-ish Linux behavior.
+                repeatable way. It helps you exercise resilience—timeouts, retries, backpressure, and
+                fallbacks—against realistic Linux behavior.
               </p>
               <ul class="check">
                 <li><strong>Network impairment</strong>: delay and packet loss on an interface</li>
@@ -92,8 +101,8 @@
               <div class="card__title">How it’s used</div>
               <p>
                 The CLI reads a config, validates it, then applies injectors for a scheduled duration.
-                Your <span class="mono">README.md</span> documents Linux prerequisites (bpftool,
-                memlock, tc) and includes a sample TOML configuration.
+                You need a capable Linux host: eBPF, bpftool, traffic control (<span class="mono">tc</span>),
+                and enough memlock for maps—see <a href="#setup">Environment setup</a> below.
               </p>
               <div class="codebox">
                 <div class="codebox__title">Quick help</div>
@@ -109,13 +118,19 @@ cargo run -- --help</code></pre>
         <div class="container">
           <h2>Environment setup (Linux)</h2>
           <p class="muted">
-            ChaosFilter is documented for Linux (eBPF, bpftool, tc). Your repository notes that Secure
-            Boot can interfere with some eBPF behavior.
+            ChaosFilter is developed and run on Linux with eBPF, bpftool, and traffic control (<span
+              class="mono"
+              >tc</span
+            >).
           </p>
 
           <div class="grid grid--2">
             <div class="card">
               <div class="card__title">System packages</div>
+              <p class="muted">
+                The build compiles Rust, native code, and eBPF; these packages provide a compiler, kernel
+                headers, bpftool, and networking tools ChaosFilter expects at build and run time.
+              </p>
               <div class="codebox">
                 <pre><code>sudo apt update
 sudo apt upgrade -y
@@ -129,6 +144,12 @@ sudo apt install -y \
 
             <div class="card">
               <div class="card__title">Rust + BPF target</div>
+              <p class="muted">
+                The workspace builds the CLI and crates for userspace; the <span class="mono"
+                  >bpfel-unknown-none</span
+                >
+                target is required to compile the eBPF program.
+              </p>
               <div class="codebox">
                 <pre><code>curl https://sh.rustup.rs -sSf | sh
 source $HOME/.cargo/env
@@ -136,21 +157,25 @@ source $HOME/.cargo/env
 rustup target add bpfel-unknown-none</code></pre>
               </div>
               <p class="muted">
-                If you’re using Aya build scripts, your README recommends installing
-                <span class="mono">cargo-generate</span>.
+                Aya-based tooling sometimes uses <span class="mono">cargo-generate</span> for project scaffolding.
               </p>
             </div>
           </div>
 
-          <div class="grid grid--3">
+          <div class="grid grid--2">
             <div class="card">
               <div class="card__title">Kernel eBPF features</div>
+              <p class="muted">Lists BPF-related capabilities your kernel exposes—useful before debugging load failures.</p>
               <div class="codebox">
                 <pre><code>bpftool feature</code></pre>
               </div>
             </div>
             <div class="card">
               <div class="card__title">cgroup v2</div>
+              <p class="muted">
+                ChaosFilter’s cgroup-related injectors expect a unified hierarchy. If you want to verify that
+                your system is using cgroups v2, run:
+              </p>
               <div class="codebox">
                 <pre><code>stat -fc %T /sys/fs/cgroup/</code></pre>
               </div>
@@ -158,10 +183,26 @@ rustup target add bpfel-unknown-none</code></pre>
             </div>
             <div class="card">
               <div class="card__title">memlock</div>
+              <p class="muted">
+                Loading eBPF programs and maps can require raising the locked-memory limit for your shell. For a
+                persistent limit, configure systemd or <span class="mono">/etc/security/limits.conf</span> per
+                your distribution.
+              </p>
               <div class="codebox">
                 <pre><code>ulimit -l unlimited</code></pre>
               </div>
-              <p class="muted">Permanent option is documented in the repository README.</p>
+            </div>
+            <div class="card">
+              <div class="card__title">File descriptor limits (inspect)</div>
+              <p class="muted">
+                The filesystem injector can adjust RLIMIT_NOFILE; to inspect current soft/hard limits for open
+                files on a process:
+              </p>
+              <div class="codebox">
+                <pre><code>cat /proc/&lt;pid&gt;/limits
+# or
+prlimit --pid &lt;pid&gt;</code></pre>
+              </div>
             </div>
           </div>
         </div>
@@ -185,8 +226,8 @@ cargo run -- validate -c, --config &lt;path-to-toml-file&gt;</code></pre>
 cargo run -- chaos -c, --config chaosfilter.toml</code></pre>
               </div>
               <p class="muted">
-                Tip: run <span class="mono">chaosfilter --schema</span> to print a sample config with
-                variable descriptors (per your README).
+                Run <span class="mono">cargo run -- init</span> (or <span class="mono">chaosfilter init</span> after
+                install) to write a starter config to the current directory.
               </p>
             </div>
           </div>
@@ -196,31 +237,122 @@ cargo run -- chaos -c, --config chaosfilter.toml</code></pre>
       <section id="config" class="section section--alt">
         <div class="container">
           <h2>Example TOML config</h2>
-          <p class="muted">From your repository’s <span class="mono">README.md</span>:</p>
+          <p class="muted">
+            The <span class="mono">init</span> subcommand emits a commented template; the shape matches the
+            following (abbreviated for the page).
+          </p>
           <div class="card">
             <div class="codebox codebox--tall">
-              <pre><code>name = "netem-test"
+              <pre><code># ChaosFilter Example Configuration
+#
+# Usage:
+#   chaosfilter chaos --config cf-config.toml
+#
+# This file defines:
+#   - Targets (what to affect)
+#   - Schedule (how long to apply chaos)
+#   - Injectors (what kind of chaos to apply)
 
-[targets]
-iface = "enp5s0"
-cgroup = "77500" # Optional
+# --------------------------------------------------
+# Plan Metadata
+# --------------------------------------------------
+
+name = "example-plan"
+
+# --------------------------------------------------
+# Schedule
+# --------------------------------------------------
 
 [schedule]
+# Duration to keep chaos active (seconds)
 duration_s = 10
 
-[injectors.network_config]
-enabled = true
-target_iface = "enp5s0"
-delay_ms = 100
-loss_percent = 50.0
+# ==================================================
+# Injectors
+# ==================================================
 
+# -----------------------------
+# Network (tc netem)
+# -----------------------------
+[injectors.network_config]
+enabled = false
+
+# Network interface to target (for example: eth0, enp5s0, vethA)
+# Use "default" to resolve the system default interface at load time.
+target_iface = "default"
+
+# Network delay in milliseconds
+# delay_ms = 100
+
+# Packet loss percentage (0.0 - 100.0)
+# loss_percent = 10.0
+
+# Cgroup attach points for network classifier
+# Example: [117, 419, 666]
+# network_ebpf_cgroup = [24059]
+
+# -----------------------------
+# CPU + Memory (cgroup v2)
+# -----------------------------
 [injectors.memory_config]
 enabled = false
-target_pid = 1234
-move_pid = true
-enable = ["cpu", "memory"]
-cpu_max = "20000 100000"
-mem_max = "1G"</code></pre>
+
+# PID to constrain
+# target_pid = 12345
+
+# Move PID into target cgroup before applying limits
+# move_pid = true
+
+# Controllers to enable in cgroup.subtree_control
+# enable = ["cpu", "memory"]
+
+# CPU quota/period
+# Example: "20000 100000" = 20% of one CPU
+# cpu_max = "20000 100000"
+
+# CPU weight (1 - 10000)
+# cpu_weight = 200
+
+# Hard memory limit
+# mem_max = "1G"
+
+# Soft memory pressure threshold
+# mem_high = "800M"
+
+# Swap limit ("0" disables swap, "max" allows unlimited)
+# swap_max = "0"
+
+# -----------------------------
+# Block I/O (cgroup v2 io)
+# -----------------------------
+
+# Block I/O Injector
+[injectors.block_config]
+enabled = false
+
+# The target device that the I/O constraints will be applied to.
+# device = "/dev/sda"
+
+# Read bandwidth limit (bytes per second).
+# rbps = 10485760
+
+# Write bandwidth limit (bytes per second).
+# wbpd = 10485760
+
+# -----------------------------
+# File Descriptor Exhaustion
+# -----------------------------
+[injectors.filesystem_config]
+enabled = false
+
+# PID whose process context will be targeted
+# target_pid = 12345
+
+# New soft RLIMIT_NOFILE value
+# soft_limit = 64
+
+# New hard RLIMIT_NOFILE value
+# hard_limit = 128</code></pre>
             </div>
           </div>
         </div>
@@ -229,65 +361,24 @@ mem_max = "1G"</code></pre>
       <section id="docs" class="section">
         <div class="container">
           <h2>Documentation</h2>
-          <div class="grid grid--2">
-            <div class="card">
-              <div class="card__title">Cargo API docs (optional)</div>
-              <p>
-                If you generate Rust docs into <span class="mono">site/chaosfilter/</span>, this site will
-                link them from here.
-              </p>
-              <div class="codebox">
-                <div class="codebox__title">Generate docs</div>
-                <pre><code>cargo doc --no-deps</code></pre>
-              </div>
-              <p class="muted">
-                Use the included script <span class="mono">site/build-api-docs.ps1</span> (Windows) or
-                <span class="mono">site/build-api-docs.sh</span> (Linux/macOS) to copy the
-                <span class="mono">chaosfilter</span> crate docs under <span class="mono">site/chaosfilter/</span>.
-              </p>
-              <p class="docs-link-row">
-                <a class="btn btn--primary" id="apiDocsLink" href="./chaosfilter/index.html" hidden>
-                  Open API docs
-                </a>
-                <span class="muted" id="apiDocsHint">API docs not generated yet.</span>
-              </p>
-            </div>
-
-            <div class="card">
-              <div class="card__title">Repo docs</div>
-              <p>
-                The canonical setup and usage steps are in <span class="mono">README.md</span>.
-              </p>
-              <div class="codebox">
-                <pre><code>cargo run -- --help
-cargo doc --open</code></pre>
-              </div>
-              <p class="muted">
-                Note: <span class="mono">cargo doc --open</span> opens docs in your browser from
-                <span class="mono">target/doc</span>; the “API docs” integration on this site is for a
-                copy placed under <span class="mono">site/chaosfilter</span> so the static site can serve it.
-              </p>
-            </div>
-          </div>
-
           <div class="card">
-            <div class="card__title">Serve locally</div>
-            <p class="muted">
-              You can double-click <span class="mono">site/index.html</span>, but a local server is
-              nicer (correct MIME types, relative paths, and copied API docs).
+            <div class="card__title">API reference</div>
+            <p>
+              Rust API documentation for the <span class="mono">chaosfilter</span> crate is built in CI on every
+              push to <span class="mono">main</span> and published with the project’s documentation site—so it
+              stays in sync with the codebase without a manual <span class="mono">cargo doc</span> step for
+              readers.
             </p>
-            <div class="grid grid--2">
-              <div class="codebox">
-                <div class="codebox__title">Windows (PowerShell)</div>
-                <pre><code>cd site
-./serve.ps1</code></pre>
-              </div>
-              <div class="codebox">
-                <div class="codebox__title">Any OS (Python)</div>
-                <pre><code>cd site
-python -m http.server 5173</code></pre>
-              </div>
-            </div>
+            <p class="docs-link-row">
+              <a class="btn btn--primary" href="chaosfilter/index.html">Open API docs</a>
+            </p>
+            <p class="muted">
+              This button resolves when the rustdoc bundle sits next to this page (under
+              <span class="mono">site/chaosfilter/index.html</span>). For the crate sources and issues, use
+              <a href="https://github.com/Sfklink/ChaosFilter" rel="noopener noreferrer" target="_blank"
+                >GitHub</a
+              >.
+            </p>
           </div>
         </div>
       </section>
@@ -296,7 +387,7 @@ python -m http.server 5173</code></pre>
         <div class="container footer__inner">
           <div>
             <strong>ChaosFilter</strong>
-            <span class="muted">— static overview site generated in-repo</span>
+            <span class="muted">— project overview</span>
           </div>
           <div class="muted">
             Workspace crates: <span class="mono">chaosfilter</span>,

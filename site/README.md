@@ -1,38 +1,16 @@
 # ChaosFilter static site
 
-This folder contains a **static front-end website** that explains the ChaosFilter project and can optionally **host Cargo API docs** for the `chaosfilter` crate.
+Marketing / overview pages live here: **`site/`** (`index.html`, `styles.css`). API docs are built in CI on pushes to `main` (see `.github/workflows/transfer_cargo_doc.yml`).
 
-## Open the site
+## Preview locally
 
-- **Quick**: open `site/index.html`
-- **Recommended (local server)**:
+- Open `site/index.html`, or use the **Live Server** extension with `site/` as the root, or:
 
 ```powershell
 cd site
-./serve.ps1
+python -m http.server 8080
 ```
 
-Then open `http://localhost:5173`.
+## `chaosfilter/index.html` link
 
-## Include Cargo API docs (optional)
-
-To generate Rust docs and copy **`target/doc/chaosfilter`** into **`site/chaosfilter/`** (so the homepage can link to `chaosfilter/index.html`):
-
-```powershell
-./site/build-api-docs.ps1
-```
-
-On Linux/macOS:
-
-```bash
-./site/build-api-docs.sh
-```
-
-This runs:
-
-- `cargo doc --no-deps -p chaosfilter` (builds under `target/doc/`)
-- copies `target/doc/chaosfilter/` into `site/chaosfilter/`
-
-Afterwards, the “Open API docs” button on the homepage will appear when served via a local server.
-
-For **GitHub Pages**, copy `site/chaosfilter/` into `docs/chaosfilter/` before pushing (or run the script and sync that folder into `docs/`).
+The **Open API docs** button targets `chaosfilter/index.html` next to `index.html` (i.e. `site/chaosfilter/index.html` when the bundle is present). For a **local** check, run `cargo doc` and copy `target/doc/chaosfilter/` into `site/chaosfilter/`.
