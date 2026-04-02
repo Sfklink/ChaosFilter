@@ -36,22 +36,6 @@ jobs:
       - name: Build cargo doc
         run: cargo doc
 
-      - name: Add docs redirect to index.html
-        run: |
-          cat > target/doc/index.html <<'EOF'
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <meta charset="utf-8">
-              <meta http-equiv="refresh" content="0; url=chaosfilter/index.html">
-              <title>ChaosFilter Docs</title>
-            </head>
-            <body>
-              <p>Redirecting to <a href="chaosfilter/index.html">chaosfilter</a>…</p>
-            </body>
-          </html>
-          EOF
-
       - name: Clone capstone static site repo
         run: |
           git clone \
