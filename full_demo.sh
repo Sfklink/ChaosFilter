@@ -474,18 +474,6 @@ fd_workload
 sleep 1
 set_config "$FD_PID"
 
-echo
-echo "Filesystem Baseline"
-echo "Watching FD growth before chaos..."
-echo
-
-for _ in {1..10}; do
-    COUNT=$(get_fd_count)
-    LIMIT=$(get_fd_limit)
-    printf "Open FDs: %3d | Limit: %s (OPENING)\n" "$COUNT" "$LIMIT"
-    sleep 1
-done
-
 FD_SOFT=$(get_config_value "soft_limit")
 FD_HARD=$(get_config_value "hard_limit")
 
