@@ -8,7 +8,7 @@
 //! applying the limits, and it snapshots the previous configuration to allow
 //! for a best-effort restoration during the revert phase.
 
-use crate::{plans::Plan, validate::validate_memory_config};
+use crate::{plans::Plan, validate::{resolve_cgroup_path, validate_memory_config}};
 use anyhow::{Context, Result, anyhow};
 use std::{
     fs,
@@ -22,7 +22,7 @@ use tracing::{debug, info, warn};
 /// Tracks the target PID, cgroup path, and the original resource limits
 /// to enable reversion.
 #[derive(Default)]
-pub struct MemoryConfig {
+pub struct MemoryInjector {
     /// Indicates whether chaos has been applied.
     applied: bool,
 
@@ -45,10 +45,7 @@ pub struct MemoryConfig {
     prev_swap_max: Option<String>,
 }
 
-/// Type alias for [`MemoryConfig`] as a [`crate::injector::ChaosInjector`].
-pub type MemoryInjector = MemoryConfig;
-
-impl MemoryConfig {
+impl MemoryInjector {
     /// Ensures that the target cgroup is a "domain" cgroup, not "threaded".
     ///
     /// Moving PIDs into a cgroup via `cgroup.procs` requires the cgroup to be in
@@ -106,7 +103,7 @@ impl MemoryConfig {
         let pid = plan.injectors.memory_config.target_pid.unwrap();
         let cg_rel = plan.injectors.memory_config.target_pid.unwrap().to_string();
 
-        let cg = resolve_cgroup_path(cg_rel);
+        let cg = resolve_cgroup_path(&cg_rel);
 
         info!(
             cgroup = %cg.display(),
@@ -242,16 +239,6 @@ impl MemoryConfig {
     }
 }
 
-/// Resolves a relative cgroup path against the system root (`/sys/fs/cgroup`).
-fn resolve_cgroup_path(arg: String) -> PathBuf {
-    let p = PathBuf::from(arg);
-    if p.is_absolute() {
-        p
-    } else {
-        Path::new("/sys/fs/cgroup").join(p)
-    }
-}
-
 /// Ensures the specified cgroup directory exists.
 fn ensure_cgroup_dir_exists(cg: &Path) -> std::io::Result<()> {
     if !cg.exists() {
@@ -344,11 +331,11 @@ impl crate::injector::ChaosInjector for MemoryInjector {
     }
 
     fn apply(&mut self, plan: Plan) -> Result<()> {
-        MemoryConfig::apply(self, &plan)
+        MemoryInjector::apply(self, &plan)
     }
 
     fn revert(&mut self) -> Result<()> {
-        MemoryConfig::revert(self)
+        MemoryInjector::revert(self)
     }
 }
 
@@ -356,18 +343,6 @@ impl crate::injector::ChaosInjector for MemoryInjector {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-
-    #[test]
-    fn resolve_cgroup_path_absolute() {
-        let cgroup_path = resolve_cgroup_path("/tmp/test".parse().unwrap());
-        assert_eq!(cgroup_path, PathBuf::from("/tmp/test"));
-    }
-
-    #[test]
-    fn resolve_cgroup_path_relative() {
-        let p = resolve_cgroup_path("test".parse().unwrap());
-        assert_eq!(p, Path::new("/sys/fs/cgroup").join("test"));
-    }
 
     #[test]
     fn ensure_cgroup_dir_exists_test_create_if_missing() {
@@ -497,7 +472,7 @@ mod tests {
         fs::create_dir_all(&cgroup).unwrap();
         fs::write(cgroup.join("cgroup.type"), "domain\n").unwrap();
 
-        MemoryConfig::assert_domain_cgroup(&cgroup).unwrap();
+        MemoryInjector::assert_domain_cgroup(&cgroup).unwrap();
     }
 
     #[test]
@@ -507,7 +482,7 @@ mod tests {
         fs::create_dir_all(&cgroup).unwrap();
         fs::write(cgroup.join("cgroup.type"), "threaded\n").unwrap();
 
-        let err = MemoryConfig::assert_domain_cgroup(&cgroup).unwrap_err().to_string();
+        let err = MemoryInjector::assert_domain_cgroup(&cgroup).unwrap_err().to_string();
         assert!(err.contains("threaded"));
         assert!(err.contains("cannot move PID"));
     }
