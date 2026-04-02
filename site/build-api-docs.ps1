@@ -23,7 +23,7 @@ try {
 }
 
 if (-not (Test-Path $crateDoc)) {
-  throw "Expected crate docs at $crateDoc — run `cargo doc --no-deps` from the workspace root."
+  throw "Expected crate docs at $crateDoc. Run: cargo doc --no-deps -p chaosfilter (from workspace root)."
 }
 
 Write-Host "Copying chaosfilter docs to $outDir ..." -ForegroundColor Cyan
