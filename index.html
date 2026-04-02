@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="ChaosFilter is an eBPF-powered chaos engineering tool for Linux. This site explains what it is, how to install it, how to run it, and how to generate Cargo API docs."
+    />
+    <title>ChaosFilter — Project Overview</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script defer src="./script.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+
+    <header class="topbar">
+      <div class="container topbar__inner">
+        <div class="brand">
+          <span class="brand__mark" aria-hidden="true">CF</span>
+          <div class="brand__text">
+            <div class="brand__name">ChaosFilter</div>
+            <div class="brand__tagline">eBPF-powered chaos engineering for Linux</div>
+          </div>
+        </div>
+
+        <nav class="nav" aria-label="Primary">
+          <a href="#overview">Overview</a>
+          <a href="#setup">Setup</a>
+          <a href="#usage">Usage</a>
+          <a href="#config">Config</a>
+          <a href="#docs">Docs</a>
+          <a href="./qr.html">QR</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="content">
+      <section class="hero">
+        <div class="container hero__inner">
+          <div class="hero__copy">
+            <h1>ChaosFilter</h1>
+            <p class="lede">
+              A Rust workspace that combines a CLI controller with an eBPF program (via Aya) to inject
+              controlled chaos into Linux systems—starting with network impairment (delay/loss) and
+              resource stress controls.
+            </p>
+            <div class="cta-row">
+              <a class="btn btn--primary" href="#usage">Run it</a>
+              <a class="btn btn--ghost" href="#docs">Generate API docs</a>
+            </div>
+            <div class="hero__badges" aria-label="Highlights">
+              <span class="pill">Rust 2024 edition</span>
+              <span class="pill">Aya eBPF</span>
+              <span class="pill">TOML config</span>
+            </div>
+          </div>
+
+          <div class="card hero__card">
+            <div class="card__title">Workspace layout</div>
+            <ul class="mono-list">
+              <li><span class="mono">chaosfilter/</span> — CLI binary</li>
+              <li><span class="mono">chaosfilter-ebpf/</span> — eBPF program</li>
+              <li><span class="mono">chaosfilter-common/</span> — shared types</li>
+            </ul>
+            <div class="callout">
+              This site is static: open <span class="mono">site/index.html</span> directly, or run the
+              included server script for nicer routing.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="overview" class="section">
+        <div class="container">
+          <h2>Project overview</h2>
+          <div class="grid grid--2">
+            <div class="card">
+              <div class="card__title">What it does</div>
+              <p>
+                ChaosFilter is built to <strong>inject failure conditions</strong> in a controlled,
+                repeatable way. It’s aimed at testing resilience (timeouts, retries, backpressure,
+                fallbacks) under real-ish Linux behavior.
+              </p>
+              <ul class="check">
+                <li><strong>Network impairment</strong>: delay and packet loss on an interface</li>
+                <li><strong>Config-driven</strong>: one TOML file describes a run (“plan”)</li>
+                <li><strong>eBPF under the hood</strong>: integrates with the kernel via Aya</li>
+              </ul>
+            </div>
+
+            <div class="card">
+              <div class="card__title">How it’s used</div>
+              <p>
+                The CLI reads a config, validates it, then applies injectors for a scheduled duration.
+                Your <span class="mono">README.md</span> documents Linux prerequisites (bpftool,
+                memlock, tc) and includes a sample TOML configuration.
+              </p>
+              <div class="codebox">
+                <div class="codebox__title">Quick help</div>
+                <pre><code>cargo build
+cargo run -- --help</code></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="setup" class="section section--alt">
+        <div class="container">
+          <h2>Environment setup (Linux)</h2>
+          <p class="muted">
+            ChaosFilter is documented for Linux (eBPF, bpftool, tc). Your repository notes that Secure
+            Boot can interfere with some eBPF behavior.
+          </p>
+
+          <div class="grid grid--2">
+            <div class="card">
+              <div class="card__title">System packages</div>
+              <div class="codebox">
+                <pre><code>sudo apt update
+sudo apt upgrade -y
+
+sudo apt install -y \
+  build-essential clang llvm libelf-dev zlib1g-dev libclang-dev \
+  linux-headers-$(uname -r) pkg-config bpftool iproute2 iptables \
+  net-tools curl</code></pre>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card__title">Rust + BPF target</div>
+              <div class="codebox">
+                <pre><code>curl https://sh.rustup.rs -sSf | sh
+source $HOME/.cargo/env
+
+rustup target add bpfel-unknown-none</code></pre>
+              </div>
+              <p class="muted">
+                If you’re using Aya build scripts, your README recommends installing
+                <span class="mono">cargo-generate</span>.
+              </p>
+            </div>
+          </div>
+
+          <div class="grid grid--3">
+            <div class="card">
+              <div class="card__title">Kernel eBPF features</div>
+              <div class="codebox">
+                <pre><code>bpftool feature</code></pre>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card__title">cgroup v2</div>
+              <div class="codebox">
+                <pre><code>stat -fc %T /sys/fs/cgroup/</code></pre>
+              </div>
+              <p class="muted">You should see <span class="mono">cgroup2fs</span>.</p>
+            </div>
+            <div class="card">
+              <div class="card__title">memlock</div>
+              <div class="codebox">
+                <pre><code>ulimit -l unlimited</code></pre>
+              </div>
+              <p class="muted">Permanent option is documented in the repository README.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="usage" class="section">
+        <div class="container">
+          <h2>Usage</h2>
+          <div class="grid grid--2">
+            <div class="card">
+              <div class="card__title">Validate a config</div>
+              <div class="codebox">
+                <pre><code>cargo build
+cargo run -- validate -c, --config &lt;path-to-toml-file&gt;</code></pre>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card__title">Run chaos with a config</div>
+              <div class="codebox">
+                <pre><code>cargo build
+cargo run -- chaos -c, --config chaosfilter.toml</code></pre>
+              </div>
+              <p class="muted">
+                Tip: run <span class="mono">chaosfilter --schema</span> to print a sample config with
+                variable descriptors (per your README).
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="config" class="section section--alt">
+        <div class="container">
+          <h2>Example TOML config</h2>
+          <p class="muted">From your repository’s <span class="mono">README.md</span>:</p>
+          <div class="card">
+            <div class="codebox codebox--tall">
+              <pre><code>name = "netem-test"
+
+[targets]
+iface = "enp5s0"
+cgroup = "77500" # Optional
+
+[schedule]
+duration_s = 10
+
+[injectors.network_config]
+enabled = true
+target_iface = "enp5s0"
+delay_ms = 100
+loss_percent = 50.0
+
+[injectors.memory_config]
+enabled = false
+target_pid = 1234
+move_pid = true
+enable = ["cpu", "memory"]
+cpu_max = "20000 100000"
+mem_max = "1G"</code></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="docs" class="section">
+        <div class="container">
+          <h2>Documentation</h2>
+          <div class="grid grid--2">
+            <div class="card">
+              <div class="card__title">Cargo API docs (optional)</div>
+              <p>
+                If you generate Rust docs into <span class="mono">site/api/</span>, this site will link
+                them from here.
+              </p>
+              <div class="codebox">
+                <div class="codebox__title">Generate docs</div>
+                <pre><code>cargo doc --no-deps</code></pre>
+              </div>
+              <p class="muted">
+                Use the included script <span class="mono">site/build-api-docs.ps1</span> (Windows) or
+                <span class="mono">site/build-api-docs.sh</span> (Linux/macOS) to copy the output under
+                <span class="mono">site/api/</span>.
+              </p>
+              <p class="docs-link-row">
+                <a class="btn btn--primary" id="apiDocsLink" href="./api/index.html" hidden>
+                  Open API docs
+                </a>
+                <a class="btn btn--ghost" href="./qr.html">QR for this site</a>
+                <span class="muted" id="apiDocsHint">API docs not generated yet.</span>
+              </p>
+            </div>
+
+            <div class="card">
+              <div class="card__title">Repo docs</div>
+              <p>
+                The canonical setup and usage steps are in <span class="mono">README.md</span>.
+              </p>
+              <div class="codebox">
+                <pre><code>cargo run -- --help
+cargo doc --open</code></pre>
+              </div>
+              <p class="muted">
+                Note: <span class="mono">cargo doc --open</span> opens docs in your browser from
+                <span class="mono">target/doc</span>; the “API docs” integration on this site is for a
+                copy placed under <span class="mono">site/api</span> so the static site can serve it.
+              </p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card__title">Serve locally</div>
+            <p class="muted">
+              You can double-click <span class="mono">site/index.html</span>, but a local server is
+              nicer (correct MIME types, relative paths, and copied API docs).
+            </p>
+            <div class="grid grid--2">
+              <div class="codebox">
+                <div class="codebox__title">Windows (PowerShell)</div>
+                <pre><code>cd site
+./serve.ps1</code></pre>
+              </div>
+              <div class="codebox">
+                <div class="codebox__title">Any OS (Python)</div>
+                <pre><code>cd site
+python -m http.server 5173</code></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <div class="container footer__inner">
+          <div>
+            <strong>ChaosFilter</strong>
+            <span class="muted">— static overview site generated in-repo</span>
+          </div>
+          <div class="muted">
+            Workspace crates: <span class="mono">chaosfilter</span>,
+            <span class="mono">chaosfilter-common</span>, <span class="mono">chaosfilter-ebpf</span>
+          </div>
+        </div>
+      </footer>
+    </main>
+  </body>
+</html>
