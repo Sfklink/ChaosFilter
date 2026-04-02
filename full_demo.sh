@@ -110,7 +110,6 @@ TARGET_PID=""
 
 echo "---------------------------------------"
 echo "ChaosFilter Interactive Demo"
-echo "Network Stack"
 echo "---------------------------------------"
 echo
 echo "Initalizing sudo if needed"
