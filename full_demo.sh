@@ -73,6 +73,30 @@ PY
     MEM_PID=$!
 }
 
+# Apply a workload to filesystem (FD exhaustion)
+fd_workload() {
+    python3 <<'PY' &
+import os
+import time
+import sys
+
+fds = []
+print(f"[workload] PID={os.getpid()} starting FD exhaustion workload", flush=True)
+
+while True:
+    try:
+        # Open a dummy file
+        f = open("/dev/null", "r")
+        fds.append(f)
+        time.sleep(0.1)
+    except OSError as e:
+        # This will happen when RLIMIT_NOFILE is reached
+        print(f"[workload] Error opening file: {e}", flush=True)
+        time.sleep(1)
+PY
+    FD_PID=$!
+}
+
 
 # Path to the compiled Chaosfilter binary
 CHAOS_BIN="$(command -v chaosfilter || true)"
@@ -104,11 +128,15 @@ pause
 #   Handler that makes sure anything started by the demo stops when the demo is over or is ended early
 cleanup() {
     echo
-    echo "Cleanup:"
+    echo "Cleaning up..."
     [[ -n "${CPU_PID:-}" ]] && kill "$CPU_PID" 2>/dev/null || true
     [[ -n "${MEM_PID:-}" ]] && kill "$MEM_PID" 2>/dev/null || true
+    [[ -n "${FD_PID:-}" ]] && kill "$FD_PID" 2>/dev/null || true
     [[ -n "${PING_PID:-}" ]] && kill "$PING_PID" 2>/dev/null || true
     [[ -n "${CHAOS_PID:-}" ]] && kill "$CHAOS_PID" 2>/dev/null || true
+
+    echo
+    echo "Done"
 }
 trap cleanup EXIT
 
@@ -146,6 +174,12 @@ cpu_weight = 200
 mem_max = "300M"
 mem_high = "200M"
 swap_max = "0"
+
+[injectors.filesystem_config]
+enabled = true
+target_pid = $TARGET_PID
+soft_limit = 150
+hard_limit = 170
 
 EOF
 
@@ -247,6 +281,43 @@ monitor_mem() {
 
         printf "Memory (process): %4d MB | cgroup: %4d MB (%s)\n" \
             "$MEM_MB" "$CGROUP_MB" "$STATE"
+
+        sleep 1
+    done
+}
+
+# Gets the number of open file descriptors
+get_fd_count() {
+    if [[ -d /proc/$FD_PID/fd ]]; then
+        ls /proc/"$FD_PID"/fd | wc -l
+    else
+        echo 0
+    fi
+}
+
+# Gets the current FD limit for the process
+get_fd_limit() {
+    if [[ -f /proc/$FD_PID/limits ]]; then
+        grep "Max open files" /proc/"$FD_PID"/limits | awk '{print $4}'
+    else
+        echo 0
+    fi
+}
+
+# Watches the FDs in real time while chaos is active
+monitor_fd() {
+    while kill -0 "$CHAOS_PID" 2>/dev/null; do
+        COUNT=$(get_fd_count)
+        LIMIT=$(get_fd_limit)
+
+        if (( COUNT >= LIMIT )); then
+            STATE="EXHAUSTED"
+        else
+            STATE="OPENING"
+        fi
+
+        printf "Open FDs: %3d | Limit: %3d (%s)\n" \
+            "$COUNT" "$LIMIT" "$STATE"
 
         sleep 1
     done
@@ -389,13 +460,53 @@ wait "$CHAOS_PID"
 CHAOS_PID=""
 
 echo "Memory Chaos Done"
+pause
+
+# Filesystem chaos section
+echo "----------------------------------"
+echo "Filesystem Chaos Demo"
+echo "----------------------------------"
+pause
+
+# Start workload and config
+echo "Starting workload..."
+fd_workload
+sleep 1
+set_config "$FD_PID"
+
+echo
+echo "Filesystem Baseline"
+echo "Watching FD growth before chaos..."
+echo
+
+for _ in {1..10}; do
+    COUNT=$(get_fd_count)
+    LIMIT=$(get_fd_limit)
+    printf "Open FDs: %3d | Limit: %s (OPENING)\n" "$COUNT" "$LIMIT"
+    sleep 1
+done
+
+FD_SOFT=$(get_config_value "soft_limit")
+FD_HARD=$(get_config_value "hard_limit")
+
+# Start chaos
+echo
+echo "Applying ChaosFilter (FILESYSTEM)..."
+echo "ChaosFilter will exhaust file descriptors (soft limit: $FD_SOFT, hard limit: $FD_HARD)"
+pause
+
+sudo -E "$CHAOS_BIN" chaos --config demo_config.toml &
+CHAOS_PID=$!
+
+# Let chaos attach before we start monitoring limits
+sleep 1
+monitor_fd
+
+wait "$CHAOS_PID"
+CHAOS_PID=""
+
+echo "Filesystem Chaos Done"
 
 echo "----------------------------------"
 echo "ChaosFilter Full Demo Complete"
 echo "----------------------------------"
-
-
-
-## For Ethan ##
-# upadte the config
-# add the chaos application after memory
