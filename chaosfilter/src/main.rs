@@ -6,7 +6,6 @@
 
 use anyhow::Context;
 use chaosfilter::plans::{Plan, RunConfigArgs};
-use chaosfilter::injector::block_delay::BlockDelayInjector;
 use chaosfilter::injector::cpu_memory::MemoryInjector;
 use chaosfilter::injector::filesystem::FilesystemInjector;
 use chaosfilter::injector::network::NetworkInjector;
@@ -162,9 +161,6 @@ pub fn run_plan(plan: &Plan) -> anyhow::Result<()> {
     }
     if plan.injectors.network_config.enabled {
         injectors.push(Box::new(NetworkInjector::default()));
-    }
-    if plan.injectors.block_config.enabled {
-        injectors.push(Box::new(BlockDelayInjector::default()));
     }
     if plan.injectors.filesystem_config.enabled {
         injectors.push(Box::new(FilesystemInjector::default()));

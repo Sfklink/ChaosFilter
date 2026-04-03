@@ -269,7 +269,7 @@ fn set_rlimit_nofile(pid: u32, soft: u64, hard: u64) -> Result<()> {
 mod tests {
     use super::*;
     use crate::plans::{
-        BlockConfig, FileSystemConfig, Injectors, MemoryConfig as CliMemCfg,
+        FileSystemConfig, Injectors, MemoryConfig as CliMemCfg,
         NetworkConfig as CliNetCfg, Plan, Schedule
     };
     use std::fs;
@@ -282,7 +282,6 @@ mod tests {
             injectors: Injectors {
                 network_config: CliNetCfg::default(),
                 memory_config: CliMemCfg::default(),
-                block_config: BlockConfig::default(),
                 filesystem_config: FileSystemConfig::default(),
             },
         }

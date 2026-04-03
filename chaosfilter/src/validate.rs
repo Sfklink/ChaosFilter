@@ -34,7 +34,6 @@ pub fn validate_plan(plan: &Plan) -> Result<()> {
         ("network",     validate_network_config(plan)),
         ("memory",      validate_memory_config(plan)),
         ("filesystem",  validate_filesystem_config(plan)),
-        ("block",       validate_block_config(plan)),
     ];
  
     for (name, result) in validators {
@@ -191,61 +190,6 @@ pub fn validate_memory_config(plan: &Plan) -> Result<()> {
     Ok(())
 }
 
-/// Validates the [`crate::plans::BlockConfig`] section of a [`Plan`].
-///
-/// # Arguments
-///
-/// * `plan` - The plan containing the block I/O configuration.
-///
-/// # Returns
-///
-/// Returns `Ok(())` if the configuration is valid or disabled.
-///
-/// # Behavior
-///
-/// If enabled, checks:
-/// 1. `device` is present and the path exists.
-/// 2. The `io` controller is enabled in the root cgroup's `subtree_control`.
-///
-/// # Errors
-///
-/// Returns an error if any of the above checks fail.
-pub fn validate_block_config(plan: &Plan) -> Result<()> {
-    if !plan.injectors.block_config.enabled {
-        debug!("block_config not enabled; skipping");
-        return Ok(());
-    }
- 
-    let device = plan
-        .injectors
-        .block_config
-        .device
-        .as_deref()
-        .ok_or_else(|| anyhow!("block_config.enabled=true requires block_config.device"))?;
- 
-    if !Path::new(device).exists() {
-        return Err(anyhow!("block device not found: {}", device));
-    }
- 
-    let subtree_path = Path::new("/sys/fs/cgroup/cgroup.subtree_control");
-    let subtree = std::fs::read_to_string(subtree_path).map_err(|e| {
-        anyhow!(
-            "could not read {}: {} — is cgroup v2 mounted?",
-            subtree_path.display(),
-            e
-        )
-    })?;
- 
-    if !subtree.contains("io") {
-        return Err(anyhow!(
-            "cgroup v2 IO controller not enabled; run: sudo sh -c 'echo +io > {}'",
-            subtree_path.display()
-        ));
-    }
- 
-    Ok(())
-}
-
 /// Helper to check if a network interface exists.
 fn validate_iface_exists(iface: Option<&str>) -> Result<()> {
     let Some(iface) = iface else {
@@ -288,7 +232,7 @@ fn validate_cgroup_v2() -> Result<()> {
 mod test {
     use super::*;
     use crate::plans::{
-        BlockConfig, FileSystemConfig, Injectors, MemoryConfig as CliMemCfg,
+        FileSystemConfig, Injectors, MemoryConfig as CliMemCfg,
         NetworkConfig as CliNetCfg, Plan, Schedule
     };
 
@@ -299,7 +243,6 @@ mod test {
             injectors: Injectors {
                 network_config: CliNetCfg::default(),
                 memory_config: CliMemCfg::default(),
-                block_config: BlockConfig::default(),
                 filesystem_config: FileSystemConfig::default(),
             },
         }

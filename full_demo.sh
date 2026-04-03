@@ -141,7 +141,7 @@ trap cleanup EXIT
 
 
 # Config file updates
-#   Enables all the sections execpt for block chaos and initializes all the variables for the chaos
+#   Enables all the sections and initializes all the variables for the chaos
 set_config() {
     TARGET_PID=$1
 cat <<EOF > demo_config.toml
