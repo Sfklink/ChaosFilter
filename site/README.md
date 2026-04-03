@@ -1,16 +1,11 @@
 # ChaosFilter static site
 
-Marketing / overview pages live here: **`site/`** (`index.html`, `styles.css`). API docs are built in CI on pushes to `main` (see `.github/workflows/transfer_cargo_doc.yml`).
+Overview pages: **`site/index.html`** and **`styles.css`**.
 
-## Preview locally
+## Preview
 
-- Open `site/index.html`, or use the **Live Server** extension with `site/` as the root, or:
+Open `index.html`, use Live Server on `site/`, or `cd site` and run `python -m http.server`.
 
-```powershell
-cd site
-python -m http.server 8080
-```
+## API docs nav link
 
-## `chaosfilter/index.html` link
-
-The **Open API docs** button targets `chaosfilter/index.html` next to `index.html` (i.e. `site/chaosfilter/index.html` when the bundle is present). For a **local** check, run `cargo doc` and copy `target/doc/chaosfilter/` into `site/chaosfilter/`.
+Points at **`chaosfilter/index.html`** beside `index.html`. For a local preview, put the `chaosfilter` crate rustdoc tree there (e.g. copy from `target/doc/chaosfilter/` after a doc build).

@@ -28,7 +28,12 @@
           <a href="#setup">Setup</a>
           <a href="#usage">Usage</a>
           <a href="#config">Config</a>
-          <a href="#docs">Docs</a>
+          <a
+            href="chaosfilter/index.html"
+            title="Rust API reference (rustdoc) for the chaosfilter crate, when this folder is present next to the site."
+            aria-label="Rust API documentation for the chaosfilter crate"
+            >API docs</a
+          >
           <a
             class="nav__github"
             href="https://github.com/Sfklink/ChaosFilter"
@@ -118,54 +123,76 @@ cargo run -- --help</code></pre>
         <div class="container">
           <h2>Environment setup (Linux)</h2>
           <p class="muted">
-            ChaosFilter is developed and run on Linux with eBPF, bpftool, and traffic control (<span
-              class="mono"
-              >tc</span
-            >).
+            What follows is the <strong>essential baseline</strong> for ChaosFilter on Linux: installs and checks
+            the CLI and eBPF injectors actually need—not every possible kernel or distro requirement, just what
+            this page walks through.
           </p>
 
           <div class="grid grid--2">
             <div class="card">
               <div class="card__title">System packages</div>
               <p class="muted">
-                The build compiles Rust, native code, and eBPF; these packages provide a compiler, kernel
-                headers, bpftool, and networking tools ChaosFilter expects at build and run time.
+                <strong>Why:</strong> ChaosFilter is a Rust binary that <strong>loads eBPF programs into the
+                kernel</strong> and uses <span class="mono">tc</span> (iproute2) for impairment. On the host where
+                you <strong>run</strong> it, those code paths expect <span class="mono">bpftool</span>,
+                <span class="mono">tc</span>, and the other networking utilities in this list—<strong>that is run
+                time</strong>. The same line also installs a compiler, LLVM, and kernel headers if you
+                <strong>build</strong> the workspace on this machine; omit or trim those if you only deploy a
+                prebuilt binary elsewhere.
               </p>
-              <div class="codebox">
+              <p class="muted">
+                <strong>Run this</strong> on Debian/Ubuntu to install that baseline (adjust for your package
+                manager):
+              </p>
+              <div class="codebox codebox--commands">
                 <pre><code>sudo apt update
 sudo apt upgrade -y
 
 sudo apt install -y \
-  build-essential clang llvm libelf-dev zlib1g-dev libclang-dev \
-  linux-headers-$(uname -r) pkg-config bpftool iproute2 iptables \
-  net-tools curl</code></pre>
+  build-essential \
+  clang \
+  llvm \
+  libelf-dev \
+  zlib1g-dev \
+  libclang-dev \
+  linux-headers-$(uname -r) \
+  pkg-config \
+  bpftool \
+  iproute2 \
+  iptables \
+  net-tools \
+  curl</code></pre>
               </div>
             </div>
 
             <div class="card">
               <div class="card__title">Rust + BPF target</div>
               <p class="muted">
-                The workspace builds the CLI and crates for userspace; the <span class="mono"
-                  >bpfel-unknown-none</span
+                <strong>Why:</strong> The CLI and orchestration are Rust; the <span class="mono"
+                  >chaosfilter-ebpf</span
                 >
-                target is required to compile the eBPF program.
+                crate compiles to eBPF bytecode, which requires Rust plus the
+                <span class="mono">bpfel-unknown-none</span> rustup target.
               </p>
+              <p class="muted"><strong>Run this</strong> to install Rust (via rustup) and add that target:</p>
               <div class="codebox">
                 <pre><code>curl https://sh.rustup.rs -sSf | sh
 source $HOME/.cargo/env
 
 rustup target add bpfel-unknown-none</code></pre>
               </div>
-              <p class="muted">
-                Aya-based tooling sometimes uses <span class="mono">cargo-generate</span> for project scaffolding.
-              </p>
             </div>
           </div>
 
           <div class="grid grid--2">
             <div class="card">
               <div class="card__title">Kernel eBPF features</div>
-              <p class="muted">Lists BPF-related capabilities your kernel exposes—useful before debugging load failures.</p>
+              <p class="muted">
+                <strong>Why:</strong> Before you chase load errors, it helps to see which BPF-related features
+                your kernel advertises. ChaosFilter loads eBPF programs; this command summarizes what the kernel
+                claims to support.
+              </p>
+              <p class="muted"><strong>Run this</strong> to print that summary:</p>
               <div class="codebox">
                 <pre><code>bpftool feature</code></pre>
               </div>
@@ -173,8 +200,12 @@ rustup target add bpfel-unknown-none</code></pre>
             <div class="card">
               <div class="card__title">cgroup v2</div>
               <p class="muted">
-                ChaosFilter’s cgroup-related injectors expect a unified hierarchy. If you want to verify that
-                your system is using cgroups v2, run:
+                <strong>Why:</strong> CPU/memory and block injectors use cgroup v2 controllers; they assume a
+                unified hierarchy—not legacy cgroup v1.
+              </p>
+              <p class="muted">
+                If you want to see whether your system is using cgroup v2, run this (it prints the filesystem
+                type of the cgroup mount):
               </p>
               <div class="codebox">
                 <pre><code>stat -fc %T /sys/fs/cgroup/</code></pre>
@@ -184,10 +215,12 @@ rustup target add bpfel-unknown-none</code></pre>
             <div class="card">
               <div class="card__title">memlock</div>
               <p class="muted">
-                Loading eBPF programs and maps can require raising the locked-memory limit for your shell. For a
-                persistent limit, configure systemd or <span class="mono">/etc/security/limits.conf</span> per
-                your distribution.
+                <strong>Why:</strong> Loading maps and programs can exceed the default locked-memory cap for your
+                shell session; the loader may fail until the limit is raised. For a permanent limit, use systemd
+                or <span class="mono">/etc/security/limits.conf</span> per your distro.
               </p>
+              <p class="muted"><strong>Run this</strong> in the shell you use to build or run ChaosFilter (session
+                only):</p>
               <div class="codebox">
                 <pre><code>ulimit -l unlimited</code></pre>
               </div>
@@ -195,9 +228,15 @@ rustup target add bpfel-unknown-none</code></pre>
             <div class="card">
               <div class="card__title">File descriptor limits (inspect)</div>
               <p class="muted">
-                The filesystem injector can adjust RLIMIT_NOFILE; to inspect current soft/hard limits for open
-                files on a process:
+                <strong>Why:</strong> The filesystem injector raises or lowers <strong>RLIMIT_NOFILE</strong>
+                (max open files) <strong>for one process ID</strong>—the <span class="mono">target_pid</span> you
+                set in config. That is a <strong>per-PID rlimit</strong> (process resource limit), not a cgroup
+                controller limit; cgroup v2 doesn’t own this path. When debugging, read soft/hard NOFILE
+                <strong>for that same PID</strong>.
               </p>
+              <p class="muted"><strong>Run one of these</strong> with the real PID in place of <span class="mono"
+                  >&lt;pid&gt;</span
+                >:</p>
               <div class="codebox">
                 <pre><code>cat /proc/&lt;pid&gt;/limits
 # or
@@ -211,19 +250,25 @@ prlimit --pid &lt;pid&gt;</code></pre>
       <section id="usage" class="section">
         <div class="container">
           <h2>Usage</h2>
+          <p class="muted">
+            <strong>Commands you can run:</strong> the blocks below are example invocations of the
+            <span class="mono">chaosfilter</span> CLI (through <span class="mono">cargo run</span> after
+            <span class="mono">cargo build</span>)—validate, run chaos from a TOML, and (in the second card)
+            scaffold a file with <span class="mono">init</span>.
+          </p>
           <div class="grid grid--2">
             <div class="card">
               <div class="card__title">Validate a config</div>
               <div class="codebox">
                 <pre><code>cargo build
-cargo run -- validate -c, --config &lt;path-to-toml-file&gt;</code></pre>
+cargo run -- validate --config &lt;path-to-toml&gt;</code></pre>
               </div>
             </div>
             <div class="card">
               <div class="card__title">Run chaos with a config</div>
               <div class="codebox">
                 <pre><code>cargo build
-cargo run -- chaos -c, --config chaosfilter.toml</code></pre>
+cargo run -- chaos --config chaosfilter.toml</code></pre>
               </div>
               <p class="muted">
                 Run <span class="mono">cargo run -- init</span> (or <span class="mono">chaosfilter init</span> after
@@ -238,8 +283,8 @@ cargo run -- chaos -c, --config chaosfilter.toml</code></pre>
         <div class="container">
           <h2>Example TOML config</h2>
           <p class="muted">
-            The <span class="mono">init</span> subcommand emits a commented template; the shape matches the
-            following (abbreviated for the page).
+            <span class="mono">init</span> writes a commented template; this is the same structure in shortened
+            form.
           </p>
           <div class="card">
             <div class="codebox codebox--tall">
@@ -354,31 +399,6 @@ enabled = false
 # New hard RLIMIT_NOFILE value
 # hard_limit = 128</code></pre>
             </div>
-          </div>
-        </div>
-      </section>
-
-      <section id="docs" class="section">
-        <div class="container">
-          <h2>Documentation</h2>
-          <div class="card">
-            <div class="card__title">API reference</div>
-            <p>
-              Rust API documentation for the <span class="mono">chaosfilter</span> crate is built in CI on every
-              push to <span class="mono">main</span> and published with the project’s documentation site—so it
-              stays in sync with the codebase without a manual <span class="mono">cargo doc</span> step for
-              readers.
-            </p>
-            <p class="docs-link-row">
-              <a class="btn btn--primary" href="chaosfilter/index.html">Open API docs</a>
-            </p>
-            <p class="muted">
-              This button resolves when the rustdoc bundle sits next to this page (under
-              <span class="mono">site/chaosfilter/index.html</span>). For the crate sources and issues, use
-              <a href="https://github.com/Sfklink/ChaosFilter" rel="noopener noreferrer" target="_blank"
-                >GitHub</a
-              >.
-            </p>
           </div>
         </div>
       </section>

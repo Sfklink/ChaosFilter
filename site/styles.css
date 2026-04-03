@@ -238,6 +238,13 @@ a.brand:focus-visible {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+/* Let cards shrink so wide <pre> scrolls inside the card, not the page */
+.grid .card,
+.container > .card {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .grid--3 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -276,11 +283,22 @@ a.brand:focus-visible {
   border: 1px solid var(--ink-border);
   background: rgba(2, 6, 23, 0.04);
   overflow: hidden;
+  max-width: 100%;
 }
 
 .card .codebox {
   border-color: rgba(255, 255, 255, 0.12);
   background: var(--info-code-bg);
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Long shell snippets: keep scroll inside the card, not the viewport */
+.codebox--commands pre {
+  font-size: 0.82rem;
+  line-height: 1.45;
+  max-width: 100%;
 }
 
 .codebox--tall pre {
@@ -309,7 +327,10 @@ pre {
   font-size: 0.92rem;
   color: rgba(2, 6, 23, 0.88);
   white-space: pre;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .card pre {
@@ -388,14 +409,6 @@ pre {
 
 .card .btn--ghost:hover {
   background: rgba(255, 255, 255, 0.12);
-}
-
-.docs-link-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-top: 8px;
 }
 
 .footer {
