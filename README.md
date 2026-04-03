@@ -127,15 +127,11 @@ cargo run -- validate -c, --config <path-to-toml-file>
 
 Example Toml Config File:
 
-Run ```chaosfilter --schema``` to see a sample config file with variable descriptors.
+Run ```chaosfilter init``` to see a sample config file with variable descriptors.
 
 `chaosfilter.toml`:
 ```toml
-name = "netem-test"
-
-[targets]
-iface = "enp5s0"
-cgroup = "77500" # Optional
+name = "chaos-test"
 
 [schedule]
 duration_s = 10
@@ -153,49 +149,21 @@ move_pid = true
 enable = ["cpu", "memory"]
 cpu_max = "20000 100000"
 mem_max = "1G"
+
+[injectors.filesystem_config]
+enabled = false
+target_pid = 1234
+soft_limit = 64
+hard_limit = 128
 ```
 
 Example (Build & Run with Config):
 ```bash
 cargo build
-cargo run -- chaos -c, --config chaosfilter.toml
+cargo run -- chaos -c chaosfilter.toml
 ```
 
 ---
-
-## Development
-
-To add a new module in the controller directory (in this example, ```StorageConfig```), navigate to the ```Injectors``` struct in cli.rs.
-
-```rust
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Injectors {
-    #[serde(default)]
-    pub network_config: NetworkConfig,
-    #[serde(default)]
-    pub memory_config: MemoryConfig,
-    #[serde(default)]
-    pub storage_config: StorageConfig,
-}
-```
-
-and then create your `StorageConfig` struct in cli.rs.
-
-```rust
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct StorageConfig {
-    pub enabled: bool,
-    pub targetdrive: Option<String>,
-    pub var1: u32,
-    pub var2: Option<String>,
-    pub var3: i32,
-    ...
-}
-```
-
-Once added, `StorageConfig` will be included in the `Plan` struct, and have access to its members. Ensure that `use crate::cli::Plan` is included in your module.
-
-To maintain a level of parity between modules, ensure that all domain-specific logic (Network, Memory, Storage) is self-contained within each module.  This will aid future developers in maintaining the software's architecture.
 
 ## Documentation
 

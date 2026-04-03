@@ -78,23 +78,6 @@ enabled = false
 # swap_max = "0"
 
 # -----------------------------
-# Block I/O (cgroup v2 io)
-# -----------------------------
-
-# Block I/O Injector
-[injectors.block_config]
-enabled = false
-
-# The target device that the I/O constraints will be applied to.
-# device = "/dev/sda"
-
-# Read bandwidth limit (bytes per second).
-# rbps = 10485760
-
-# Write bandwidth limit (bytes per second).
-# wbpd = 10485760
-
-# -----------------------------
 # File Descriptor Exhaustion
 # -----------------------------
 [injectors.filesystem_config]

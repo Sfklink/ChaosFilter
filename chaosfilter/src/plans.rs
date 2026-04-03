@@ -109,10 +109,6 @@ pub struct Injectors {
     #[serde(default)]
     pub memory_config: MemoryConfig,
 
-    /// Block device I/O throttling.
-    #[serde(default)]
-    pub block_config: BlockConfig,
-
     /// Filesystem resource limits (e.g., file descriptors).
     #[serde(default)]
     pub filesystem_config: FileSystemConfig,
@@ -178,32 +174,6 @@ pub struct MemoryConfig {
 
     /// Maximum swap usage.
     pub swap_max: Option<String>,
-}
-
-/// Configuration for Block I/O throttling.
-///
-/// Limits read/write throughput and IOPS for specific block devices.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct BlockConfig {
-    /// Master enable flag for this injector.
-    #[serde(default)]
-    pub enabled: bool,
-
-    /// The block device path (e.g., "/dev/sda").
-    #[serde(default)]
-    pub device: Option<String>,
-
-    /// Read bytes per second limit.
-    pub rbps: Option<u64>,
-
-    /// Write bytes per second limit.
-    pub wbps: Option<u64>,
-
-    /// Read I/O operations per second limit.
-    pub riops: Option<u64>,
-
-    /// Write I/O operations per second limit.
-    pub wiops: Option<u64>,
 }
 
 /// Configuration for filesystem-related limits.

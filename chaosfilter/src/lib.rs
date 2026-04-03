@@ -12,7 +12,6 @@
 //! - **Network Chaos**: Inject packet loss, delay, and jitter into specific network interfaces
 //!   using `tc` and `netem`.
 //! - **Resource Constraints**: Apply CPU and memory limits to specific processes using **cgroups v2**.
-//! - **I/O Chaos**: Throttle block device read/write throughput and IOPS.
 //! - **System Limits**: Simulate resource exhaustion by lowering file descriptor limits (`RLIMIT_NOFILE`).
 //!
 //! ## Architecture
