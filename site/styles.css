@@ -279,6 +279,7 @@ a.brand:focus-visible {
 }
 
 .codebox {
+  position: relative;
   border-radius: 16px;
   border: 1px solid var(--ink-border);
   background: rgba(2, 6, 23, 0.04);
@@ -287,11 +288,51 @@ a.brand:focus-visible {
 }
 
 .card .codebox {
+  position: relative;
   border-color: rgba(255, 255, 255, 0.12);
   background: var(--info-code-bg);
   min-width: 0;
   max-width: 100%;
   overflow-x: auto;
+}
+
+.copy-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  cursor: pointer;
+  z-index: 10;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
+  padding: 0;
+}
+
+.copy-button:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  transform: scale(1.05);
+}
+
+.copy-button.copied {
+  background: #10b981; /* Success green */
+  color: #ffffff;
+  border-color: transparent;
+  opacity: 1;
+}
+
+.copy-button svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
 }
 
 /* Long shell snippets: keep scroll inside the card, not the viewport */
