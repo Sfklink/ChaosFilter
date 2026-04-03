@@ -103,11 +103,11 @@
             </div>
 
             <div class="card">
-              <div class="card__title">How it’s used</div>
+              <div class="card__title">How it's used</div>
               <p>
                 The CLI reads a config, validates it, then applies injectors for a scheduled duration.
                 You need a capable Linux host: eBPF, bpftool, traffic control (<span class="mono">tc</span>),
-                and enough memlock for maps—see <a href="#setup">Environment setup</a> below.
+                and enough memlock for maps—see <a href="#setup" class="link--red">Environment setup</a> below.
               </p>
               <div class="codebox">
                 <div class="codebox__title">Quick help</div>
@@ -231,7 +231,7 @@ rustup target add bpfel-unknown-none</code></pre>
                 <strong>Why:</strong> The filesystem injector raises or lowers <strong>RLIMIT_NOFILE</strong>
                 (max open files) <strong>for one process ID</strong>—the <span class="mono">target_pid</span> you
                 set in config. That is a <strong>per-PID rlimit</strong> (process resource limit), not a cgroup
-                controller limit; cgroup v2 doesn’t own this path. When debugging, read soft/hard NOFILE
+                controller limit; cgroup v2 doesn't own this path. When debugging, read soft/hard NOFILE
                 <strong>for that same PID</strong>.
               </p>
               <p class="muted"><strong>Run one of these</strong> with the real PID in place of <span class="mono"

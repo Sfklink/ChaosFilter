@@ -452,6 +452,12 @@ pre {
   background: rgba(255, 255, 255, 0.12);
 }
 
+.link--red {
+  color: #ef4444 !important;
+  text-decoration: underline !important;
+  font-weight: 600;
+}
+
 .footer {
   padding: 28px 0 42px;
   border-top: 1px solid var(--info-border);
