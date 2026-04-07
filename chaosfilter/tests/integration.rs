@@ -164,3 +164,82 @@ fn run_chaos_plan_invalid_iface() {
 
     print_output(cmd);
 }
+
+/// Verifies that the `init` command generates a valid configuration file.
+#[test]
+fn init_generates_config() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let config_path = tempdir.path().join("cf-config.toml");
+
+    let cmd = cargo::cargo_bin_cmd!("chaosfilter")
+        .args(["init", "--pid", "1234", "--iface", "lo"])
+        .current_dir(tempdir.path())
+        .assert()
+        .success();
+
+    print_output(cmd);
+    assert!(config_path.exists());
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(content.contains("target_pid = \"1234\""));
+    assert!(content.contains("target_iface = \"lo\""));
+}
+
+/// Verifies that `init` fails if the config file already exists and --force is not used.
+#[test]
+fn init_fails_if_exists() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let config_path = tempdir.path().join("cf-config.toml");
+    std::fs::write(&config_path, "old").unwrap();
+
+    let cmd = cargo::cargo_bin_cmd!("chaosfilter")
+        .args(["init"])
+        .current_dir(tempdir.path())
+        .assert()
+        .failure();
+
+    print_output(cmd);
+}
+
+/// Verifies that `init` succeeds with --force even if the file exists.
+#[test]
+fn init_succeeds_with_force() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let config_path = tempdir.path().join("cf-config.toml");
+    std::fs::write(&config_path, "old").unwrap();
+
+    let cmd = cargo::cargo_bin_cmd!("chaosfilter")
+        .args(["init", "--force"])
+        .current_dir(tempdir.path())
+        .assert()
+        .success();
+
+    print_output(cmd);
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(content.contains("name = \"example-plan\""));
+}
+
+/// Verifies that `validate` fails with a non-existent config file.
+#[test]
+fn validate_missing_file() {
+    let cmd = cargo::cargo_bin_cmd!("chaosfilter")
+        .args(["validate", "--config", "/tmp/does_not_exist_12345.toml"])
+        .assert()
+        .failure();
+
+    print_output(cmd);
+}
+
+/// Verifies that `validate` fails with invalid TOML.
+#[test]
+fn validate_invalid_toml() {
+    let mut file = NamedTempFile::new().unwrap();
+    write!(file, "this is not toml").unwrap();
+
+    let cmd = cargo::cargo_bin_cmd!("chaosfilter")
+        .args(["validate", "--config", file.path().to_str().unwrap()])
+        .assert()
+        .failure();
+
+    print_output(cmd);
+}
+
