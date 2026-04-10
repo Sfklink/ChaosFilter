@@ -459,4 +459,44 @@ mod test {
 
         assert!(err.contains("failed to read config file:"))
     }
+
+    #[test]
+    fn test_output_config_basic() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let config_path = tempdir.path().join("cf-config.toml");
+        
+        output_config(&config_path, false, None, None).unwrap();
+        
+        assert!(config_path.exists());
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("name = \"example-plan\""));
+    }
+
+    #[test]
+    fn test_output_config_with_pid_and_iface() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let config_path = tempdir.path().join("cf-config.toml");
+        
+        output_config(&config_path, false, Some(1234), Some("eth0")).unwrap();
+        
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("target_iface = \"eth0\""));
+        assert!(content.contains("target_pid = \"1234\""));
+        assert!(content.contains("enabled = true"));
+    }
+
+    #[test]
+    fn test_output_config_force_overwrite() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let config_path = tempdir.path().join("cf-config.toml");
+        
+        fs::write(&config_path, "original content").unwrap();
+        
+        let err = output_config(&config_path, false, None, None).unwrap_err().to_string();
+        assert!(err.contains("already exists"));
+        
+        output_config(&config_path, true, None, None).unwrap();
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("name = \"example-plan\""));
+    }
 }

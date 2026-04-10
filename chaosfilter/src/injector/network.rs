@@ -500,3 +500,62 @@ fn root_prio_exists(iface: &str) -> Result<bool> {
         .lines()
         .any(|line| line.contains("qdisc prio") && line.contains("root") && line.contains("1:")))
 }
+
+#[cfg(test)]
+    mod tests {
+    use super::*;
+    use crate::plans::{NetworkConfig, Injectors, MemoryConfig, FileSystemConfig, Plan, Schedule};
+
+    fn base_plan() -> Plan {
+        Plan {
+            name: "test".to_string(),
+            schedule: Schedule { duration_s: 10 },
+            injectors: Injectors {
+                network_config: NetworkConfig::default(),
+                memory_config: MemoryConfig::default(),
+                filesystem_config: FileSystemConfig::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn test_select_filter_mode() {
+        assert_eq!(select_filter_mode(&vec![]), FilterMode::MatchAll);
+        assert_eq!(select_filter_mode(&vec![123]), FilterMode::EbpfMarked);
+    }
+
+    #[test]
+    fn test_mark_apply_success() {
+        let mut injector = NetworkInjector::default();
+        assert!(!injector.applied);
+        assert!(injector.iface.is_none());
+
+        injector.mark_apply_success("eth0");
+        assert!(injector.applied);
+        assert_eq!(injector.iface.as_deref(), Some("eth0"));
+    }
+
+    #[test]
+    fn test_revert_not_applied() {
+        let mut injector = NetworkInjector::default();
+        injector.revert().unwrap();
+    }
+
+    #[test]
+    fn test_name() {
+        let injector = NetworkInjector::default();
+        assert_eq!(injector.name(), "network");
+    }
+
+    #[test]
+    fn test_apply_fails_missing_iface() {
+        let mut injector = NetworkInjector::default();
+        let mut plan = base_plan();
+        plan.injectors.network_config.enabled = true;
+        plan.injectors.network_config.target_iface = None;
+
+        let result = injector.apply(plan);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("network target interface not specified"));
+    }
+}
